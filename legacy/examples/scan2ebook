@@ -1,0 +1,314 @@
+#!/usr/bin/env python
+# -*- mode: python; coding: utf-8; -*-
+
+# (c) April 2012 
+# (c) November 2014 Diedrich Vorberg <diedrich@tux4web.de>
+
+import sys, os, os.path as op, string, re, subprocess, optparse, tempfile, \
+    glob
+
+from t4.debug import log, debug
+from t4.psg.document.dsc import dsc_document
+from t4.psg.util import PAPERSIZES, mm
+from t4.psg.drawing.box import eps_image, raster_image, box
+
+try:
+    from PIL import Image
+except ImportError:
+    Image = None
+
+
+original_eps_image_write_to = eps_image.write_to
+eps_image_count = 0
+def eps_image_write_to(self, fp):
+    global eps_image_count
+    log.write("\rPages written: %i" % eps_image_count)
+    log.flush()
+    eps_image_count += 1
+    
+    return original_eps_image_write_to(self, fp)
+eps_image.write_to = eps_image_write_to
+
+
+def parse_options():
+    usage = "usage: %prog [options] <input file>"
+    parser = optparse.OptionParser(usage=usage)
+    add = parser.add_option
+    
+    add("-r", None, dest="resolution", default="300x300",
+        help=("Resolution in which intermediate files are created "
+              "(DPI or DPIxDPI)"))
+    add("-v", "--verbose", dest="verbose", default=False, action="store_true",
+        help="Make the script say what's going on.")
+    add("-d", "--debug", dest="debug", default=False, action="store_true",
+        help="Be even more verbose and do not delete intermediate files.")
+    add("-o", None, dest="outfilename", default=None,
+        help="Output file name. Defaults to <infilename>.ebook.pdf")
+    add("-p", "--papersize", dest="papersize", default="a5",
+        help="Output paper size. Defaults to a5 (portrait).")
+    add("-m", "--margin", dest="margin", default="0",
+        help="Space to leave blank around the split images on each page.")
+    add("-g", "--gs", dest="gs", default=None,
+        help="Name of the Ghostscript executable.")
+    
+    opts, args = parser.parse_args()
+
+    if len(args) != 1:
+        parser.error("You must specify an input file.")
+
+    return opts, args
+
+
+resolution_re = re.compile(r"(\d+)x(\d+)|(\d+)")
+def resolution_string(options):
+    match = resolution_re.match(options.resolution)
+    if match is None:
+        raise ValueError("Resolution string %s can't be parsed." % repr(
+                options.resolution))
+    else:
+        a, b, c = match.groups()
+        if a is None and b is None:
+            return c + "x" + c
+        else:
+            return a + "x" + b
+
+def create_temporary_files(tmpdir, infilename, options):
+    print >> log, "Creating temporary EPS files from", infilename    
+
+    #gsdevice = "tiffgray"
+    #ext = "tiff"
+    gsdevice = "epswrite"
+    ext = "eps"
+    
+    outfile_re = re.compile(r".*?out(\d+)\.%s" % ext)
+
+    cmd = [ options.gs, "-dNOPAUSE", "-dBATCH",
+            "-r" + resolution_string(options),
+            "-sDEVICE=%s" % gsdevice, "-dUseCropBox",
+            "-sOutputFile=%s/out%%d.%s" % ( tmpdir, ext, ),
+            infilename, ]
+    
+    print >> log, string.join(cmd, " ")
+
+    # If we're in verbose or debug mode, we let GS's output show
+    # on the console. Otherwise it's ignored.
+    if log.verbose or debug.verbose:
+        pipe = None
+    else:
+        pipe = subprocess.PIPE
+
+    gs = subprocess.Popen(cmd, stdout=pipe, stderr=pipe)
+    stdout, stderr = gs.communicate()
+    
+    if gs.returncode != 0:
+        # If GS failed we have to raise an appropriate exception.
+        if pipe is not None:
+            # If we've subpressed GS's output, this is the time to let the user
+            # know what it said.
+            print stdout.read()
+            print
+            print stderr.read()
+        raise IOError("Ghostscript failed.")
+
+    # Use glob to create a list of the temporary files we created.
+    filenames = glob.glob("%s/out*.%s" % (tmpdir, ext,))
+
+    # Sort the filenames by their numerical component so the pages are
+    # in the right order.
+    def number(s):
+        match = outfile_re.match(s)
+        return int(match.groups()[0])
+    
+    filenames = map(lambda fn: ( number(fn), fn, ), filenames)
+    filenames.sort(lambda a, b: cmp(a[0], b[0]))
+    filenames = map(lambda tpl: tpl[1], filenames)
+
+    return filenames
+
+class pages_image:
+    def __init__(self, filename):
+        self.filename = filename        
+        self.eps_image = None
+        
+    def add_pages(self, document, papersize, margin):
+        """
+        Add two pages of PAGESIZE to the DOCUMENT with the left and
+        the right half of the pages image respectively.
+        """
+        self.add_image(document.page(papersize), 0, margin)
+        self.add_image(document.page(papersize), 1, margin)
+
+    def add_image(self, page, idx, margin):
+        if self.eps_image is None:
+            if self.filename.endswith(".eps"):
+                self.eps_image = eps_image(page,
+                                           open(self.filename),
+                                           document_level=False)
+            else:
+                if Image is None:
+                    raise ImportError("PIL not installed.")
+                self.eps_image = raster_image(page,
+                                              Image.open(self.filename),
+                                              document_level=False)
+                
+
+        canvas = page.canvas(margin=margin)
+
+        imagew, imageh = self.eps_image.w() / 2, self.eps_image.h()
+
+        if imagew == 0.0 or imageh == 0.0:
+            # An empty page? GS 9 seems to create these.
+            return
+        
+        # Scale the image to the canvas height
+        contenth = canvas.h()
+        contentw = imagew * ( contenth / imageh )
+
+        # If the resulting box is too wide, scale the image to the
+        # canvas width.
+        if contentw > canvas.w():
+            contentw = canvas.w()
+            contenth = imageh * ( contentw / imagew )
+
+        # Create a (clipping) box for the image to go into.
+        inner = box(canvas, 0, 0, contentw, contenth, border=False, clip=True)
+
+        # The right side needs some moving
+        if idx == 1: 
+            print >> inner.head, "-%f 0 translate" % contentw
+        
+        # Scale the image by setting a scale factor on the canvas
+        scalefactor = contentw / imagew
+        print >> inner.head, scalefactor, scalefactor, "scale"
+
+
+        # Before we insert the inner box, we translate the viewport
+        # to center the inner box on the canvas.
+        padding_left = (canvas.w() - contentw) / 2
+        padding_top = (canvas.h() - contenth) / 2
+        print >> canvas.head, padding_left, padding_top, "translate"        
+        
+        inner.append(self.eps_image)
+        
+        canvas.append(inner)
+
+def papersize_string(options):
+    return PAPERSIZES[options.papersize]
+
+def run_result_through_postscript(infilename, outfilename,
+                                  document, options):
+    # "-dDetectDuplicateImages", seems to be on by default or taken care of
+    # by setting document_level=True for the images.
+    #"-dPDFSETTINGS=/ebook" doesn't seem to do anything.
+    cmd = [ options.gs, "-dNOPAUSE", "-dBATCH",
+            "-r" + resolution_string(options),            
+            "-sDEVICE=pdfwrite",
+            "-sPAPERSIZE=%s" % options.papersize,
+            "-sOutputFile=%s" % outfilename,
+            "-dProcessColorModel=/DeviceGray",
+            "-", ]
+    
+    print >> log, string.join(cmd, " ")
+
+    # If we're in verbose or debug mode, we let GS's output show
+    # on the console. Otherwise it's ignored.
+    if log.verbose or debug.verbose:
+        pipe = None
+    else:
+        pipe = subprocess.PIPE
+
+    gs = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=pipe, stderr=pipe)
+    document.write_to(gs.stdin)
+    stdout, stderr = gs.communicate()
+
+    if gs.returncode != 0:
+        # If GS failed we have to raise an appropriate exception.
+        if pipe is not None:
+            # If we've subpressed GS's output, this is the time to let 
+            # the user know what it said.
+            print stdout.read()
+            print
+            print stderr.read()
+        raise IOError("Ghostscript failed (2)")
+
+
+
+
+def process(tmpdir, infilename, options):
+    if not op.exists(infilename):
+        raise IOError("Input %s file does not exist." % repr(infilename))
+
+
+    if options.outfilename is None:
+        parts = string.split(infilename, ".")
+        if parts[-1] == "pdf": del parts[-1]
+        if parts[-1] == "print": del parts[-1]
+        name = string.join(parts, ".")            
+        outfilename = name + ".ebook.pdf"
+    else:
+        outfilename = options.outfilename
+
+    if op.exists(outfilename):
+        raise IOError("File exists: " + repr(outfilename))
+    
+    # Create temporary files
+    tmpfilenames = create_temporary_files(tmpdir, infilename, options)
+
+    # Create a pages_image object for each temporary EPS.
+    pages_images = map(pages_image, tmpfilenames)
+
+    document = dsc_document()
+    papersize = papersize_string(options)
+    margin = mm(float(options.margin))
+    
+    for i in pages_images:
+        i.add_pages(document, papersize, margin)
+
+    print >> log, "Creating temporary postscript file."    
+    fp = open(outfilename + ".ps", "w")
+    document.write_to(fp)
+    fp.close()
+        
+    #run_result_through_postscript(infilename, outfilename,
+    #                              document, options)
+
+def command_exists(cmd):
+    fp = os.popen("which " + cmd)
+    result = fp.read()
+    if string.strip(result) == "":
+        return False
+    else:
+        return True
+
+def main():
+    options, args = parse_options()
+
+    try:
+        log.verbose = options.verbose
+        log.debug = options.debug
+        
+        tmpdir = tempfile.mkdtemp()
+        print >> log, "Created temporary dir", tmpdir
+
+        if options.gs is None:
+            if command_exists("gs8"):
+                options.gs = "gs8"
+            else:
+                options.gs = "gs"
+
+        infilename = args[0]
+        process(tmpdir, infilename, options)
+    except Exception, e:
+        if options.verbose or options.debug:
+            raise
+        else:
+            print e
+            sys.exit(1)
+    finally:
+        if not options.debug:
+            print >> log, "\nDeleting", tmpdir
+            os.system("rm -R " + tmpdir)
+        else:
+            print >> log, "NOT deleting", tmpdir
+
+main()

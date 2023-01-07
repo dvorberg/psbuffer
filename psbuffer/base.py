@@ -1,0 +1,337 @@
+#!/usr/bin/python
+
+##  This file is part of psbuffer.
+##
+##  Copyright 2006–23 by Diedrich Vorberg <diedrich@tux4web.de>
+##
+##  All Rights Reserved
+##
+##  For more Information on orm see the README file.
+##
+##  This program is free software; you can redistribute it and/or modify
+##  it under the terms of the GNU General Public License as published by
+##  the Free Software Foundation; either version 2 of the License, or
+##  (at your option) any later version.
+##
+##  This program is distributed in the hope that it will be useful,
+##  but WITHOUT ANY WARRANTY; without even the implied warranty of
+##  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+##  GNU General Public License for more details.
+##
+##  You should have received a copy of the GNU General Public License
+##  along with this program; if not, write to the Free Software
+##  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
+##
+##  I have added a copy of the GPL in the file gpl.txt.
+
+import os, io
+
+STRING_ENCODING="utf-8"
+
+# For my development process.
+debug = print
+
+class PSBuffer(object):
+    """
+    Contain PostScript source as byte-strings and other psbuffer objects
+    to be written to a file (which must be in binary mode). All methods
+    also accept strings as input, which will be converted to bytes.
+    """
+    def __init__(self, *things):
+        self._things = list()
+        self.append(*things)
+
+    def _convert(self, thing):
+        if type(thing) is bytes or hasattr(thing, "write_to"):
+            return thing
+        elif hasattr(thing, "__bytes__"):
+            return bytes(thing)
+        else:
+            return bytes(str(thing).encode(STRING_ENCODING))
+
+    def write(self, *things):
+        self._things += [ self._convert(thing) for thing in things ]
+
+    append = write
+
+    def prepend(self, *things):
+        for thing in things:
+            self._things.insert(0, self._convert(thing))
+
+    def print(self, *args, sep=b" ", end=b"\n"):
+        """
+        This works just like print() except that it will accept everything
+        write() does and does what one would expect.
+        """
+        if args:
+            for a in args[:-1]:
+                self.write(a)
+                self.write(sep)
+
+            self.write(args[-1])
+            self.write(end)
+
+    def write_to(self, fp):
+        """
+        `fp` must be in binary mode.
+        """
+        for thing in self._things:
+            if hasattr(thing, "write_to"):
+                thing.write_to(fp)
+            elif thing is None:
+                pass
+            else:
+                fp.write(thing)
+
+class FileAsBuffer(object):
+    def __init__(self, fp):
+        """
+        `fp`: File object (in binary mode)
+        """
+        self.fp = fp
+
+    def write_fo(self, fp):
+        # Make sure the file pointer is at the desired position,
+        # that is, the one, we were initialized with.
+
+        while True:
+            s = self.fp.read(1024)
+
+            if s == "":
+                break
+            else:
+                fp.write(s)
+
+def Subfile(fp, offset, length):
+    """
+    This is a funny thing: A subfile class knows a file, an offset
+    and a length. It implements the file interface as described in the
+    Python Library Reference. It will emulate a file whoes first byte
+    is the byte of the 'parent' file pointed to by the offset and
+    whoes length is the provided length. After each of the calls to
+    one of its functions, the 'parent' file's file pointer will be
+    restored to its previous position.
+
+    This function will return a FilesystemSubfile instance if the
+    provided file pointer is a regular file and a DefaultSubfile if
+    it is not.
+
+    Tested on files in binary mode only.
+    """
+    if isinstance(fp, io.BytesIO):
+        return BytesIOSubfile(fp, offset, length)
+    else:
+        try:
+            fp.fileno
+            return FilesystemSubfile(fp, offset, length)
+        except io.UnsupportedOperation:
+            raise NotImplementedError("DefaultSubfile is as of yet untested.")
+            # return DefaultSubfile(fp, offset, length)
+
+class _Subfile(object):
+    def __init__(self, fp, offset, length):
+        self.parent = fp
+        self.offset = offset
+        self.length = length
+
+        self.seek(0)
+
+    def close(self):
+        pass
+
+    def flush(self):
+        self.parent.flush()
+
+    def isatty(self):
+        return False
+
+    def next(self):
+        raise NotImplementedError("The subfile class dosn't support iteration "
+                                  "use readlines() below!")
+
+    def read(self, bytes=None):
+        if bytes is None: bytes = self.length
+
+        if self.parent.tell() + bytes > self.offset + self.length:
+            bytes = self.offset + self.length - self.parent.tell()
+
+        if bytes < 1:
+            return ""
+        else:
+            return self.parent.read(bytes)
+
+    def readline(self, size=None):
+        old_pos = self.parent.tell()
+        line = self.parent.readline()
+        if self.parent.tell() > self.offset + self.length:
+            too_many = self.parent.tell() - (self.offset + self.length)
+            return line[:-too_many]
+        else:
+            return line
+
+    def readlines(self, sizehint=80):
+        old_tell = self.parent.tell()
+        bytes_read = 0
+        for line in self.parent.readlines():
+            bytes_read += len(line)
+            if old_tell + bytes_read > self.offset + self.length:
+                too_many = (old_tell+ bytes_read) - (self.offset + self.length)
+                yield line[:-too_many]
+                break
+            else:
+                yield line
+
+
+    def seek(self, offset, whence=0):
+        if whence == 0:
+            if offset < 0: raise IOError("Can't seek beyond file start")
+            self.parent.seek(self.offset + offset, 0)
+        elif whence == 1:
+            if self.parent.tell() - offset < 0:
+                raise IOError("Invalid argument (seek beyond file start)")
+            self.parent.seek(offset, 1)
+        elif whence == 2:
+            self.parent.seek(self.offset + self.length + offset, 0)
+        else:
+            raise IOError("Invalid argument (don't know how to seek)")
+
+    def tell(self):
+        return self.parent.tell() - self.offset
+
+    def truncate(self):
+        raise NotImplementedError("subfile does not implement truncate!")
+
+    def write(self, s):
+        """
+        This will happily overwrite the subfile's end into whatever it
+        will find there. It will reset the file pointer to the end of
+        the subfile if that happens.
+        """
+        raise NotImplemetedError("Can’t write into subfiles.")
+
+    def write_to(self, fp):
+        self.seek(0)
+        while True:
+            r = self.read(1024)
+            if len(r) == 0:
+                break
+            else:
+                fp.write(r)
+
+
+class FilesystemSubfile(_Subfile):
+    def __init__(self, fp, offset, length):
+        if not hasattr(fp, "fileno"):
+            raise ValueError("A FilesystemSubfile must always be used with "
+                             "a regular file, owning a fileno() method")
+
+        parent = os.fdopen(os.dup(fp.fileno()), "br")
+        if isinstance(fp, self.__class__):
+            _Subfile.__init__(self, parent, offset+fp.offset, length)
+        else:
+            _Subfile.__init__(self, parent, offset, length)
+
+
+    def fileno(self):
+        return self.parent.fileno()
+
+class DefaultSubfile(_Subfile):
+    def __init__(self, fp, offset, length):
+        _Subfile.__init__(self, fp, offset, length)
+
+    def save(self):
+        self.parent_seek_pointer = self.parent.tell()
+        self.parent.seek(self.offset + self.seek_pointer)
+
+    def restore(self):
+        self.seek_pointer = self.parent.tell() - self.offset
+        self.parent.seek(self.parent_seek_pointer)
+
+    def read(self, size=None):
+        self.save()
+        return _Subfile.read(self, size)
+        self.restore()
+
+    def readline(self, size):
+        self.save()
+        return _Subfile.readline(self, size)
+        self.restore()
+
+    def readlines(self, size):
+        self.save()
+        for line in _Subfile.readlines(self, size):
+            yield line
+        self.restore()
+
+    def seek(self, offset, whence=0):
+        if whence == 0:
+            self.seek_pointer = offset
+        elif whence == 1:
+            self.seek_pointer += offset
+        elif whence == 2:
+            self.seek_pointer = self.length + offset
+        else:
+            raise IOError("Invalid argument (don't know how to seek)")
+
+    def tell(self):
+        return self.seek_pointer
+
+
+class BytesIOSubfile:
+    def __init__(self, fp, offset, length):
+        self.fp = io.BytesIO(fp.getvalue()[offset:offset+length])
+
+    def write_to(self, fp):
+        fp.write(self.fp.getvalue())
+
+    def __getattr__(self, name):
+        return getattr(self.fp, name)
+
+######################################################################
+# When I grow up, I’ll be a unit test!
+
+testfile_contents = b'''\
+1234567890
+abcdefghijklmnopqrstuvwxyz
+
+Hello World!
+I am a set of binary test data.
+This is the end of the file -> .'''
+
+
+if __name__ == "__main__":
+    # Let’s test this a little.
+
+    import os.path as op, tempfile
+
+
+    b = PSBuffer(b"1", "2", 3, 4.0)
+    b.write(5)
+    b.print(6, "7", b"8")
+
+    b.prepend(0)
+
+    outfp = io.BytesIO()
+    b.write_to(outfp)
+    assert outfp.getvalue() == b'01234.056 7 8\n', ValueError
+
+    ######
+
+    with tempfile.TemporaryDirectory() as tmpdirpath:
+        testfilepath = op.join(tmpdirpath, "test.txt")
+        with open(testfilepath, "wb") as fp:
+            fp.write(testfile_contents)
+
+
+        with open(testfilepath, "br") as fp:
+            sf = Subfile(fp, 11, 26)
+            alphabet = sf.read()
+            assert alphabet == b"abcdefghijklmnopqrstuvwxyz", ValueError
+
+            ######
+
+            fp.seek(0)
+            bio = io.BytesIO(fp.read())
+            sf = Subfile(bio, 11, 26)
+            alphabet = sf.read()
+            assert alphabet == b"abcdefghijklmnopqrstuvwxyz", ValueError
