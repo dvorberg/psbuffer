@@ -31,6 +31,12 @@ STRING_ENCODING="utf-8"
 # For my development process.
 debug = print
 
+def encode(s):
+    if type(s) is str:
+        return s.encode(STRING_ENCODING)
+    else:
+        return s
+
 class PSBuffer(object):
     """
     Contain PostScript source as byte-strings and other psbuffer objects
