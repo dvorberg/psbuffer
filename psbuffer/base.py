@@ -45,20 +45,24 @@ class PSBuffer(object):
     """
     def __init__(self, *things):
         self._things = list()
-        self.append(*things)
+        self.write(*things)
 
     def _convert(self, thing):
         if type(thing) is bytes or hasattr(thing, "write_to"):
             return thing
         elif hasattr(thing, "__bytes__"):
             return bytes(thing)
+        elif thing is None:
+            return b""
         else:
             return bytes(str(thing).encode(STRING_ENCODING))
 
     def write(self, *things):
         self._things += [ self._convert(thing) for thing in things ]
 
-    append = write
+    def append(self, thing):
+        self.write(thing)
+        return thing
 
     def prepend(self, *things):
         for thing in things:
@@ -72,10 +76,13 @@ class PSBuffer(object):
         if args:
             for a in args[:-1]:
                 self.write(a)
-                self.write(sep)
+                if sep:
+                    self.write(sep)
 
             self.write(args[-1])
-            self.write(end)
+
+            if end:
+                self.write(end)
 
     def write_to(self, fp):
         """
@@ -88,6 +95,40 @@ class PSBuffer(object):
                 pass
             else:
                 fp.write(thing)
+
+
+class PSBufferWithSetup(PSBuffer):
+    def __init__(self):
+        PSBuffer.__init__(self)
+        self.head = PSBuffer()
+        self.tail = PSBuffer()
+
+    def write_to(self, fp):
+        self.head.write_to(fp)
+        PSBuffer.write_to(self, fp)
+        self.tail.write_to(fp)
+
+    def push(self, for_head, for_tail=None):
+        """
+        Append for_head to head and prepent(!) for_tail to tail. If
+        for_head and for_tail do not end in whitespace, push() will
+        append a Unix newline to them before adding them to the
+        buffer.
+        """
+        if for_head:
+            for_head = self._convert(for_head)
+            if for_head[-1] not in b"\n\t\r ":
+                for_head += b"\n"
+
+            self.head.write(for_head)
+
+        if for_tail:
+            for_tail = self._convert(for_tail)
+            if for_tail[-1] not in b"\n\t\r ":
+                for_tail = for_tail + b"\n"
+
+            self.tail.prepend(for_tail)
+
 
 class FileAsBuffer(object):
     def __init__(self, fp):
