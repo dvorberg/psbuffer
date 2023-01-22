@@ -32,10 +32,11 @@ Version 3.0 available at
 U{http://partners.adobe.com/public/developer/ps/index_specs.html}.
 """
 
-import collections.abc
+import collections.abc, functools
 
 from .base import PSBuffer, encode
 from .utils import ps_escape
+from .measure import has_dimensions, parse_size
 
 def ps_literal(value) -> bytes:
     """
@@ -55,14 +56,16 @@ class Comment(object):
     """
     A DSC comment, starting with %% and contains `args`.
     """
-    def __init__(self, keyword:str, value):
-        self.keyword = self.keyword
+    def __init__(self, keyword:str, value=None):
+        self.keyword = keyword
         self.set(value)
 
     def set(self, value):
         self._value = value
 
-        if type(self._value) in (str, bytes, int, float):
+        if value is None:
+            pass
+        elif type(self._value) in (str, bytes, int, float):
             self._payload = ps_literal(value)
         elif isinstance(value, collections.abc.Sequence):
             self._payload = [ ps_literal(a) for a in value ].join(b" ")
@@ -74,8 +77,8 @@ class Comment(object):
         return self._value
 
     def __bytes__(self):
-        if not self.args:
-            return b"%%" + self.keyword + b"\n"
+        if self._value is None:
+            return b"%%" + encode(self.keyword) + b"\n"
         elif self.keyword == b"+":
             return b"%%+ " + self._payload + b"\n"
         else:
@@ -94,6 +97,15 @@ class CommentProperty(property):
     def __set__(self, section, value):
         section.set_comment_value(self.comment_keyword, value)
 
+class CommentListProperty(CommentProperty):
+    def __get__(self, section, owner=None):
+        ret = CommentProperty.__get__(self, section, owner)
+        if ret is None:
+            ret = []
+            self.__set__(section, ret)
+
+        return ret
+
 
 class Resource(object):
     """
@@ -110,6 +122,8 @@ class Resource(object):
         self.section = section
         self.setup_lines = setup_lines
 
+class Default(object): pass
+
 class CommentCache(dict):
     def __init__(self, *initial_comments):
         dict.__init__(self)
@@ -123,15 +137,12 @@ class CommentCache(dict):
     def __contains__(self, key):
         return dict.__contains__(self, key)
 
-    def __setitem__(self, key, comment:Comment):
-        self.add(comment)
-
     def __getitem__(self, key):
         return dict.__getitem__(self, key)
 
-    def get(self, key, default=sys):
+    def get(self, key, default=Default):
         ret = dict.get(self, key, default)
-        if ret is sys:
+        if ret is Default:
             raise KeyError(key)
         else:
             return ret
@@ -146,7 +157,6 @@ class SectionCache(list):
 
     def by_name(self, name):
         return [ s for s in self if s.name == name ]
-
 
 class Section(PSBuffer):
     """
@@ -180,14 +190,14 @@ class Section(PSBuffer):
 
           Defaults -- section
 
-          Proplog -- section
+          Prolog -- section
              Resource0
              Resource1
              ...
 
           Setup -- section
 
-          Pages -- (pseudo) section
+          Pages -- section
 
              Page -- section
                PageSetup -- section
@@ -215,38 +225,34 @@ class Section(PSBuffer):
        back controll to its caller.
     @cvar subsections: List of strings naming section_?? classes of those
        subsections that may occur in this section.
-    @cvar mandatory: Boolean indicating whether this section MUST be present
-       in its parent section (meaningfull only for the first or the last
-       section in the subsection list). If a section is mandatory its begin
-       or(!) end keyword may be None. The pages_section is an exception to
-       this rule.
     """
-    begin_keyword = None
-    end_keyword = None
-    possible_subsections = ()
-    mandatory = False
-
-    def __init__(self, *begin_args):
+    def __init__(self, keyword=None, has_end=False):
         """
         The arguments passed will be put into the beginning comment.
         Remains unused if `begin_keyword` is None.
         """
         PSBuffer.__init__(self)
+        self.parent = None
 
-        self._comment_cache = CommentCache(self.begin)
+        if keyword is None:
+            self.keyword = self.__class__.__name__.replace("Section", "")
+        else:
+            self.keyword = keyword
+        self.has_end = has_end
+
+        self._comment_cache = CommentCache()
         self._subsection_cache = SectionCache()
 
-        if self.begin_keyword:
-            self.begin = Comment(self.begin_keyword, *begin_args)
-            self.append(self.begin)
-        else:
-            self.begin = None
+        self.write(self.begin_comment())
 
-        # Will be written in write_to()
-        if self.end_keyword:
-            self.end = Comment(self.end_keyword)
-        else:
-            self.end = None
+    def on_parent_set(self):
+        pass
+
+    def begin_comment(self):
+        return Comment("Begin" + self.keyword)
+
+    def end_comment(self):
+        return Comment("End" + self.keyword)
 
     def write(self, *things):
         for thing in things:
@@ -254,10 +260,38 @@ class Section(PSBuffer):
                 self._comment_cache.add(thing)
             elif isinstance(thing, Section):
                 self._subsection_cache.add(thing)
+                thing.parent = self
+                thing.on_parent_set()
 
         PSBuffer.write(self, *things)
 
-    append = write
+
+    def ascend_to(self, look_for):
+        here = self
+        while True:
+            if isinstance(here, look_for):
+                return here
+            here = here.parent
+            if here is None:
+                return None
+
+    @functools.cached_property
+    def document(self):
+        """
+        Walk up the section tree and return the document.
+        Return None if not in the tree (yet).
+        """
+        return self.ascend_to(Document)
+
+    @functools.cached_property
+    def page(self):
+        """
+        Walk up the section tree and return the page we’re on.
+        Return None if not in the tree (yet) or not the right
+        section to ask for a page.
+        """
+        return self.ascend_to(Page)
+
 
     # Comment management
     def has_comment(self, keyword):
@@ -300,8 +334,9 @@ class Section(PSBuffer):
     def write_to(self, fp):
         PSBuffer.write_to(self, fp)
 
-        if self.end is not None:
-            fp.write(bytes(self.end))
+        end_comment = self.end_comment()
+        if end_comment:
+            fp.write(bytes(end_comment))
 
     def __repr__(self):
         return "<%s %s %s (%i subsections)>" % (self.__class__.__name__,
@@ -316,9 +351,207 @@ class Section(PSBuffer):
 
 
 
+class HeaderSection(Section):
+    """
+    Header section of a DSC complient PostScript document
+    """
+    def begin_comment(self):
+        return None
 
+    def end_comment(self):
+        return Comment("EndComments")
 
+    # properties that refer to document meta data
+    bounding_box = CommentProperty("BoundingBox")
+    hires_bounding_box = CommentProperty("HiResBoundingBox")
+    creator = CommentProperty("Creator")
+    creation_date = CommentProperty("CreationDate")
+    document_data = CommentProperty("DocumentData")
+    emulation = CommentProperty("Emulation")
+    extensions = CommentListProperty("Extensions")
+    for_ = CommentProperty("For")
+    language_level = CommentProperty("LanguageLevel")
+    orientation = CommentProperty("Orientation")
+    pages = CommentProperty("Pages")
+    page_order = CommentProperty("PageOrder")
+    routing = CommentProperty("Routing")
+    title = CommentProperty("Title")
+    version = CommentProperty("Version")
 
-class atend(object):
+    document_needed_fonts = CommentListProperty("DocumentNeededFonts")
+    document_needed_procsets = CommentListProperty("DocumentNeededProcSets")
+    document_supplied_fonts = CommentListProperty("DocumentSuppliedFonts")
+    document_supplied_procsets = CommentListProperty("DocumentSuppliedProcSets")
+
+    document_process_colors = CommentListProperty("DocumentProcessColors")
+    document_custom_colors = CommentListProperty("DocumentCustomColors")
+
+class DefaultsSection(Section):
+    page_bounding_box = CommentProperty("PageBoundingBox")
+    page_media = CommentProperty("PageMedia")
+    page_orientation = CommentProperty("Page")
+    page_process_colors = CommentListProperty("PageProcessColors")
+    page_custom_colors = CommentListProperty("PageCustomColors")
+    page_requirements = CommentListProperty("PageRequirements")
+    page_resources = CommentListProperty("PageResources")
+
+class SetupSection(Section):
     pass
-AtEnd = atend()
+
+class PrologSection(Section):
+    pass
+
+class PseudoSection(Section):
+    """
+    Section without Begin and End comments
+    """
+    def begin_comment(self):
+        pass
+
+    def end_comment(self):
+        pass
+
+class PagesSection(PseudoSection):
+    pass
+
+class PDFPageSetup(PseudoSection):
+    """
+    A place to store pdf setup information for a page, that is
+    TrimBox, ArtBox etc. and the required translation. This is handled in
+    such a way so that rendering routines can identify and maybe remove
+    the translation.
+    """
+    def boxtuple(self, box):
+        return ( box, box, self.page.w + box, self.page.h + box, )
+
+    def box_command(self, key, box):
+        if box:
+            tpl = (key,) + self.boxtuple(box)
+            return "[ /%s [%.2f %.2f %.2f %.2f] /PAGE pdfmark\n" % tpl
+        else:
+            return None
+
+    def __init__(self, trim=0, art=0, crop=0, bleed=0):
+        PseudoSection.__init__(self)
+
+        self.trim, self.art, self.crop, self.bleed = trim, art, crop, bleed
+
+    def on_parent_set(self):
+
+        self.print("% Start pdfpage_setup_buffer",
+                   self.trim, self.art, self.crop, self.bleed)
+
+        # If there is a crop specified, enlarge the page by that much and
+        # translate its contents so that from the callers perspective, our
+        # page has the ‘right’ width and hight.
+        trimbox = self.boxtuple(self.trim)
+        if trimbox[:2] != (0, 0, 0, 0):
+            llx, lly, urx, ury = trimbox
+            self.page.page_bounding_box = (-llx, -lly,
+                                           self.page.w, self.page.h)
+            if llx != 0 or lly != 0:
+                self.print(llx, lly, "translate % pdfpage()")
+        else:
+            self.page.page_bounding_box = (0, 0, self.page.w, self.page.h,)
+
+        self.append(self.box_command("TrimBox", self.trim))
+        self.append(self.box_command("ArtBox", self.art))
+        self.append(self.box_command("CropBox", self.crop))
+        self.append(self.box_command("BleedBox", self.bleed))
+
+        self.print("% End pdfpage_setup_buffer")
+
+
+class Page(Section, has_dimensions):
+
+    bounding_box = CommentProperty("PageBoundingBox")
+    hires_bounding_box = CommentProperty("PageHiResBoundingBox")
+    custom_colors = CommentListProperty("PageCustomColors")
+    media = CommentProperty("PageMedia")
+    orientation = CommentProperty("Page")
+    process_colors = CommentListProperty("PageProcessColors")
+    requirements = CommentListProperty("PageRequirements")
+    resources = CommentListProperty("PageResources")
+
+    def __init__(self, size="a4", comment=None,
+                 trim=0, art=0, crop=0, bleed=0):
+        Section.__init__(self, None, False)
+        has_dimensions.__init__(self, *parse_size(size))
+
+        self.header = self.append(PageHeaderSection())
+        self.setup = self.append(PageSetupSection())
+        self.trailer = self.append(PageTrailerSection())
+
+        self.setup.append(PDFPageSetup(trim, art, crop, bleed))
+
+
+class PageHeaderSection(Section):
+    """
+    Header section of a DSC complient PostScript document
+    """
+    def begin_comment(self):
+        return None
+
+    def end_comment(self):
+        return Comment("EndPageComments")
+
+class PageSetupSection(Section):
+    pass
+
+class PageTrailerSection(Section):
+    has_end = False
+
+
+class Resource(Section):
+    pass
+
+class Trailer(Section):
+    has_end = False
+
+class Object(Section):
+    pass
+
+
+class Document(Section):
+    def begin_comment(self):
+        return b"%!PS-Adobe-3.0\n"
+
+    def end_comment(self):
+        return Comment("EOF")
+
+    def __init__(self):
+        Section.__init__(self, None, True)
+
+        self.header = self.append(HeaderSection())
+        self.defaults = self.append(DefaultsSection())
+        self.prolog = self.append(PrologSection())
+        self.setup = self.append(SetupSection())
+        self.pages = self.append(PagesSection())
+        self.trailer = self.append(Trailer())
+
+
+
+if __name__ == "__main__":
+    from io import BytesIO
+
+    from boxes import Canvas
+    from measure import mm
+
+    document = Document()
+    page = document.append(Page())
+    canvas = page.append(Canvas(mm(18), mm(18)))
+
+    canvas.print("/Helvetica findfont")
+    canvas.print("20 scalefont")
+    canvas.print("setfont")
+    canvas.print("0 0 moveto")
+    canvas.print(ps_escape("Hello, world!"), " show")
+
+    #fp = open("ps_hello_world.ps", "w")
+    #document.write_to(fp)
+    #fp.close()
+
+    fp = BytesIO()
+    document.write_to(fp)
+
+    print(fp.getvalue().decode("ascii"))
