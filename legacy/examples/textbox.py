@@ -52,9 +52,9 @@ Types deparately: ᾿Α ᾿Ε ᾿Ο ᾿Ω
 
 special_characters = u"""\
 üäöÜÄÖß € „Anführungszeichen“
-Was ist denn noch so wichtig... 
-¡ “ ¶ ¢ [ ] | { }  ≠ ¿ « ∑  € ® † Ω ¨ ⁄ ø π •  æ œ @  ∆ º ª  © ƒ ∂ ‚ å ¥ ≈ ç √ ∫ ~ µ ∞ … – ¬ ” # £ ﬁ ^ \ ˜ · ¯ ˙ » „ ‰ ¸ ˝ ˇ Á Û  Ø ∏ °  Å Í ™ Ï Ì Ó ı ˆ ﬂ Œ Æ ’ ’ ‡ Ù Ç  ◊ ‹ › ˘ ˛ ÷ — 
-Der Unicode-Support läßt nicht viel zu wünschen über, oder? 
+Was ist denn noch so wichtig...
+¡ “ ¶ ¢ [ ] | { }  ≠ ¿ « ∑  € ® † Ω ¨ ⁄ ø π •  æ œ @  ∆ º ª  © ƒ ∂ ‚ å ¥ ≈ ç √ ∫ ~ µ ∞ … – ¬ ” # £ ﬁ ^ \ ˜ · ¯ ˙ » „ ‰ ¸ ˝ ˇ Á Û  Ø ∏ °  Å Í ™ Ï Ì Ó ı ˆ ﬂ Œ Æ ’ ’ ‡ Ù Ç  ◊ ‹ › ˘ ˛ ÷ —
+Der Unicode-Support läßt nicht viel zu wünschen über, oder?
 """
 
 def box0(box, he, **kw):
@@ -107,15 +107,15 @@ def main(argv):
     he = cmu.sansserif()
     he = page.register_font(he)
 
-    al = type1("Kerkis.pfa", "Kerkis.afm")
+    al = type1("regular.pfb", "regular.afm")
     al = page.register_font(al)
 
-    ba = type1("BlackadderITC-Regular.pfa", "BlackadderITC-Regular.afm")
+    ba = type1("Alkaios.pfa", "Alkaios.afm")
     ba = page.register_font(ba)
-    
-    for counter, bb in enumerate(eight_squares(canvas)):        
+
+    for counter, bb in enumerate(eight_squares(canvas)):
         func = globals().get("box%i" % counter, None)
-        
+
         if func is None:
             break
         else:
@@ -126,7 +126,5 @@ def main(argv):
     fp = open(sys.argv[0] + ".ps", "w")
     document.write_to(fp)
     fp.close()
-        
+
 main(sys.argv)
-
-

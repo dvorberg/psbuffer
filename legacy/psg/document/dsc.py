@@ -98,15 +98,15 @@ def parse_literals(line, schema="l"):
 
       'l' -> 'Diedrich''s Document 123' -> ( 'Diedrich''s Document 123', )
 
-    If you specify l you can't specify anything else.  
+    If you specify l you can't specify anything else.
 
     Strings in Parentheses will be searched for escape sequences \\,
     \123 (oct byte representation), \n, \t, and \r. These will be
-    repleced by appropriate bytes. 
+    repleced by appropriate bytes.
 
     If the content of the DSC Comment is (atend), this function will
     return the AtEnd object defined above.
-    
+
     @param line: String containing the elementary type literals (a DSC
       comment line after the :)
     @param schema: Line schema.
@@ -121,7 +121,7 @@ def parse_literals(line, schema="l"):
         return line
     else:
         result = dsc_literal_re.findall(line)
-        
+
         #if len(result) != len(schema):
         #    msg = "Argument line %s does not match schema %s." % ( repr(line),
         #                                                            schema, )
@@ -132,7 +132,7 @@ def parse_literals(line, schema="l"):
             result = result[:len(schema)]
         elif len(schema) > len(result):
             schama = schema[:len(result)]
-            
+
 
         ret = []
         for char, tpl in zip( schema, result ):
@@ -145,10 +145,10 @@ def parse_literals(line, schema="l"):
                     ret.append(f)
                 except ValueError:
                     msg = "Can't parse %s to float " +\
-                          "(argument schema mismatch?)" 
+                          "(argument schema mismatch?)"
                     msg = msg % repr(f)
                     raise DSCSyntaxError(msg)
-                
+
             elif char == "i":
                 i = tpl[1]
                 try:
@@ -186,14 +186,14 @@ def parse_literals(line, schema="l"):
                                 s.append(chr(int(seq, 8)))
 
                     ret = join(s, "")
-                        
+
                 else:
                     ret.append("")
             else:
                 raise ValueError("Illegal schema identifyer: %s" % char)
 
         return tuple(ret)
-                    
+
 
 
 class parsed_property(property):
@@ -212,7 +212,7 @@ class parsed_property(property):
            in the current section. If a path element contains a space and a
            number n, the nth subsection of that name will be queried
            (0 based!). Examle:
-           
+
              - ( 'Prolog', ) -- The current section's Prolog attribute
              - ( 'Page 0', 'PageSetup', ) -- Setup section of the first page
 
@@ -248,12 +248,12 @@ class parsed_property(property):
         if self.argument_schema != "l":
             if len(self.argument_schema) == 1 and type(value) != TupleType:
                 value = ( value, )
-            
+
             ret = []
             for char, val in zip(self.argument_schema, value):
                 format = "%%%s" % char
                 ret.append(format % val)
-                
+
             value = join(ret, " ")
 
         cmt = section.comment(self.comment_keyword)
@@ -261,7 +261,7 @@ class parsed_property(property):
             section.append(comment(self.comment_keyword, value))
         else:
             cmt.set(value)
-            
+
     def process_comment(self, comment):
         tpl = parse_literals(comment.info, self.argument_schema)
         if tpl is not None and tpl != AtEnd and len(self.argument_schema) == 1:
@@ -272,33 +272,33 @@ class parsed_property(property):
 
     def comment(self, section):
         return getattr(section, self.comment_keyword, None)
-            
+
 class comment:
     """
     A DSC comment, starting with %% and containing zero or more
-    arguments.    
+    arguments.
     """
     def __init__(self, name, _info=None, *args):
         self.name = name
-        
+
         if _info is not None:
             self.info = strip(_info)
         else:
             self.info = None
-            
+
         if len(args) == 0:
             self.args = None
         else:
             args = map(literal, self.args)
             self.info = join(args, " ")
-            
-        
+
+
     def __str__(self):
         """
         Return a DSC comment as a string, as
-        
+
         C{%%Name}
-           
+
         if len(args) is 0 or
 
         C{%%Name: <arg0> <arg1> ...}
@@ -316,17 +316,17 @@ class comment:
         if type(value) == StringType:
             self.args = ( value, )
             self.info = value
-            
+
         elif type(value) == UnicodeType:
             raise TypeError("No Unicode allowed in dsc_documents")
-        
+
         else: #elif type(value) == ListType:
             self.args = tuple(value)
             value = map(lambda s: ps_escape(s, False), value)
             self.info = join(value, " ")
-   
 
-        
+
+
 class string_list_property(parsed_property):
     def __init__(self, keyword, atend=False):
         parsed_property.__init__(self, keyword, atend=atend)
@@ -337,7 +337,7 @@ class string_list_property(parsed_property):
         for counter, s in enumerate(ret):
             if len(s) >= 2 and s[0] == "(" and s[-1] == ")":
                 ret[counter] = s[1:-1]
-            
+
         return map(remove_parenthesis, ret)
 
     def __get__(self, section, owner=None):
@@ -350,7 +350,7 @@ class string_list_property(parsed_property):
             else:
                 # Use parsed_property's mechanism to return a result
                 ret = parsed_property.__get__(self, section, owner)
-        
+
                 if ret is None:
                     return []
                 else:
@@ -361,7 +361,7 @@ class string_list_property(parsed_property):
         @param value: A list of strings
         """
         comment = section.comment(self.comment_keyword)
-        if comment is None:            
+        if comment is None:
             section.append(string_list_comment(self.comment_keyword, value))
         else:
             if isinstance(comment, string_list_comment):
@@ -396,8 +396,8 @@ class resources_property(parsed_property):
         for a in value.as_comments(self.comment_keyword):
             if not hasattr(section, a.name):
                 section.append(a)
-        
-        
+
+
 
 class multiple_subsections(property):
     """
@@ -416,7 +416,7 @@ class dsc_resource(resource):
 
       - a type (one of font, file, procset, pattern, form, encoding)
       - a name
-      - maybe a version      
+      - maybe a version
       - maybe a resource_section
       - maybe a list of setup lines
 
@@ -450,9 +450,8 @@ class dsc_resource(resource):
 
         if type == "procset":
             parts = splitfields(name)
-
             self.procset_name = parts[0]
-            
+
             if len(parts) != 3:
                 self.version = 0.0, 0.0
             else:
@@ -469,7 +468,7 @@ class dsc_resource(resource):
         type = strip(parts[0])
 
         return cls(type, rest, section)
-    
+
     from_string = classmethod(from_string)
 
     def as_string(self):
@@ -517,7 +516,7 @@ class dsc_resource_set(resource_set):
                 # A procset name may be 'name maj min' or 'name (maj min)'
                 name = parts.pop()
                 next = parts.pop()
-                
+
                 if next[0] == "(" and next[-1] == ")":
                     major, minor = splitfields(next[1:-1])
                 else:
@@ -531,14 +530,14 @@ class dsc_resource_set(resource_set):
                     keyword = part
                 else:
                     self.add( dsc_resource(keyword, part) )
-                
-                          
-            
-        
+
+
+
+
         return self
 
     from_string = classmethod(from_string)
-                
+
     def as_comments(self, comment_keyword):
         """
         Return a generator of comment instances representing the
@@ -550,9 +549,9 @@ class dsc_resource_set(resource_set):
             else:
                 yield comment("+", a.as_string())
 
-    
 
-                                
+
+
 
 # Section
 
@@ -651,7 +650,7 @@ class section(file_like_buffer):
         """
         """
         file_like_buffer.__init__(self)
-        
+
         self.info = info
         if subfile is not None:
             self.subfile = subfile
@@ -662,17 +661,17 @@ class section(file_like_buffer):
             return False
         else:
             return True
-        
+
     def comment(self, comment_keyword):
         for a in self.comments():
             if a.name == comment_keyword:
                 return a
         else:
             return None
-        
+
     def comments(self):
         """
-        Return an iterator over the comments in this section. 
+        Return an iterator over the comments in this section.
         """
         for a in self.__dict__.values():
             if isinstance(a, comment):
@@ -693,7 +692,7 @@ class section(file_like_buffer):
             for subsection in self.subsections():
                 if subsection.name() == name:
                     return True
-                
+
         return False
 
     def subsections(self, name=None):
@@ -711,8 +710,8 @@ class section(file_like_buffer):
             for a in self:
                 if isinstance(a, section) and a.name() == name:
                     yield a
-                         
-        
+
+
     def as_string(self):
         if hasattr(self, "subfile"):
             self.subfile.seek(0)
@@ -721,7 +720,7 @@ class section(file_like_buffer):
             return file_like_buffer.as_string(self)
 
     __str__ = as_string
-    
+
     def write_to(self, fp):
         if hasattr(self, "subfile"):
             self.subfile.seek(0)
@@ -732,9 +731,9 @@ class section(file_like_buffer):
                     print >> fp, "%%" + self.begin + ":", self.info
                 else:
                     print >> fp, "%%" + self.begin
-                    
+
             file_like_buffer.write_to(self, fp)
-            
+
             if self.end is not None:
                 print >> fp, "%%" + self.end
 
@@ -750,7 +749,7 @@ class section(file_like_buffer):
         """
         if what is None:
             return
-        
+
         if isinstance(what, comment) and what.name != "+":
             if hasattr(self, what.name):
                 raise AttributeError(
@@ -779,7 +778,7 @@ class section(file_like_buffer):
 
     def parse(cls, parent, lines, level=1):
         print >> debug, ">>" * level, cls.name()
-        
+
         # On entry to the parse() function the file pointer must be set
         # to the begining of the first line of this section's content.
         start_seek_pointer = lines.fp.tell()
@@ -788,16 +787,16 @@ class section(file_like_buffer):
         if cls.begin is not None:
             # Skip our start line.
             line = lines.next()
-            
+
             # Disassemble the keyword
             parts = split(line, ":", 1)
             keyword = parts[0]
-            
+
             if len(parts) > 1:
                 info = parts[1]
             else:
                 info = ""
-                    
+
         self = cls(info=info, empty=True)
 
         # This section has a header.
@@ -806,7 +805,7 @@ class section(file_like_buffer):
             c = _subsection_class(cls.possible_subsections[0])
             c = c.parse(self, lines, level+1)
             self.append(c)
-            
+
         try:
             last_comment = None
             while True:
@@ -818,8 +817,8 @@ class section(file_like_buffer):
                 line = strip(line)
 
                 #print >> debug, cls.name(), repr(line)[:60]
-                
-                line = line[2:]                
+
+                line = line[2:]
 
                 # Here's another exception: In a Resource section the
                 # lines after the EndResource up the next
@@ -882,25 +881,25 @@ class section(file_like_buffer):
                         raise StopIteration
 
                     self.append(self.pages_section)
-                    
+
                 elif keyword in subsection_keywords.keys():
                     # A regular subsection for ourselves.
                     subsection_cls = subsection_keywords[keyword]
                     lines.rewind()
                     self.append(subsection_cls.parse(self, lines, level+1))
-                    
+
                 elif keyword in peer_keywords:
                     # Pass controll back to the caller.
                     raise StopIteration
-                
-                elif keyword[0] == "+" and last_comment is not None: 
+
+                elif keyword[0] == "+" and last_comment is not None:
                     last_comment.info = "%s %s" % ( last_comment.info,
                                                     strip(line)[1:], )
                 elif keyword == trailer_section.begin and \
                          not isinstance(self, document_section):
                     lines.rewind()
                     raise StopIteration
-                                
+
                 else:
                     cmt = comment(keyword, _info=info)
                     last_comment = cmt
@@ -912,26 +911,26 @@ class section(file_like_buffer):
                             header_cmt = getattr(header, keyword)
                             if strip(header_cmt.info) == "(atend)":
                                 setattr(header, keyword, cmt)
-                    
-                                
+
+
         except StopIteration:
             pass
-                        
+
         # Initialize a subfile
         self.subfile = subfile(lines.fp, start_seek_pointer,
                                lines.fp.tell() - start_seek_pointer)
-        
+
         print >> debug,  "<<" * level, "E", self.name()
 
         return self
-    
+
     parse = classmethod(parse)
 
     def name(cls):
         return cls.__name__[:-len("_section")]
     name = classmethod(name)
 
-        
+
 class header_section(section):
 
     begin = None
@@ -987,7 +986,7 @@ class defaults_section(section):
     page_resources = string_list_property("PageResources")
 
 
-class setup_section(section):            
+class setup_section(section):
     begin = "BeginSetup"
     end = "EndSetup"
 
@@ -995,7 +994,7 @@ class prolog_section(section):
     begin = "BeginProlog"
     end = "EndProlog"
     possible_subsections = ( "resource", )
-    
+
 class pages_section(section):
     begin = None
     end = None
@@ -1007,7 +1006,7 @@ class page_section(section):
     possible_subsections = ( "pageheader", "pagesetup",
                              "document", "object",
                              "pagetrailer", )
-    
+
     page_bounding_box = parsed_property("PageBoundingBox", "ffff", atend=True)
     hires_page_bounding_box = parsed_property("PageHiResBoundingBox",
                                               "ffff", atend=True)
@@ -1031,7 +1030,7 @@ class pagesetup_section(section):
 class pagetrailer_section(section):
     begin = "PageTrailer"
     mandatory = True
-    
+
 class document_section(section):
     begin = "BeginDocument"
     end = "EndDocument"
@@ -1048,11 +1047,11 @@ class document_section(section):
         ret = dsc_resource_set()
         for a in self.prolog.subsections("Resource"):
             ret.append(dsc_resource.from_section(a))
-                
+
         if self.has_subsection("Setup"):
             for a in self.setup.subsections("Resource"):
                 ret.append(dsc_resource.from_section(a))
-        
+
         return ret
 
     def add_resource(self, resource):
@@ -1063,14 +1062,14 @@ class document_section(section):
 class resource_section(section):
     begin = "BeginResource"
     end = "EndResource"
-    
+
     def resource(self):
         return dsc_resource.from_section(self)
 
 class trailer_section(section):
     begin = "Trailer"
     end = None
-    
+
 class object_section(section):
     begin = "BeginObject"
     end = "EndObject"
@@ -1106,7 +1105,7 @@ class pdfpage_setup_buffer(file_like_buffer):
         self._page = page
 
         print >> self, "% Start pdfpage_setup_buffer", trim, art, crop, bleed
-        
+
         # If there is a crop specified, enlarge the page by that much and
         # translate its contents so that from the callers perspective, our
         # page has the ‘right’ width and hight.
@@ -1115,7 +1114,7 @@ class pdfpage_setup_buffer(file_like_buffer):
             llx, lly, urx, ury = trimbox
             page.page_bounding_box = (-llx, -lly, page.w(), page.h())
             print >> self, llx, lly, "translate % pdfpage()"
-        else:        
+        else:
             page.page_bounding_box = (0, 0, w, h,)
 
         self.append(self.box_command("TrimBox", trim))
@@ -1124,10 +1123,10 @@ class pdfpage_setup_buffer(file_like_buffer):
         self.append(self.box_command("BleedBox", bleed))
 
         print >> self, "% End pdfpage_setup_buffer"
-        
-    
+
+
 # Document
-    
+
 class dsc_document(document_section, document):
     """
     Models a regular Adobe Document Structurnig Convention 3.0 complient
@@ -1143,7 +1142,7 @@ class dsc_document(document_section, document):
         document.__init__(self, title)
 
         self._font_wrappers = {}
-        
+
         if not empty:
             self.setup_section = setup_section()
             self.append("%!PS-Adobe-3.0\n")
@@ -1169,7 +1168,7 @@ class dsc_document(document_section, document):
 
         ret = cls.parse(None, lines)
         ret.subfile = fp
-        
+
         return ret
 
     from_file = classmethod(from_file)
@@ -1204,7 +1203,7 @@ class dsc_document(document_section, document):
         the box as specified by the documentation on pdfmark.
         """
         w, h = parse_paper_size(page_size)
-        
+
         page = dsc_page(self, page_size, label)
         page.pagesetup.append(pdfpage_setup_buffer(
                 page, trim, art, crop, bleed))
@@ -1224,7 +1223,7 @@ class dsc_document(document_section, document):
 
     def pages(self):
         return filter(lambda p: isinstance(p, dsc_page), self.pages_section)
-    
+
     def output_file(self): return self
 
     def add_font(self, font):
@@ -1236,14 +1235,14 @@ class dsc_document(document_section, document):
                     dsc_resource("font", font.ps_name) )
             else:
                 resource_name = "font %s" % font.ps_name
-                
+
                 if not self.prolog.has_subsection("resource", resource_name):
                     fp = font.main_font_file()
                     fp.seek(0)
                     first_line = fp.read(30)
                     first_byte = ord(first_line[0])
                     fp.seek(0)
-                    
+
                     if first_byte == 128: # pfb
                         font_file = pfb2pfa_buffer(fp)
                     else:
@@ -1251,7 +1250,7 @@ class dsc_document(document_section, document):
                             raise NotImplementedError("Not a pfa/b file!")
                         else:
                             font_file = file_as_buffer(fp)
-                        
+
                     section = resource_section(info=resource_name)
                     section.append(font_file)
                     self.prolog.append(section)
@@ -1261,7 +1260,7 @@ class dsc_document(document_section, document):
     def register_font(self, font):
         """
         This function will register a font with this document and
-        return a font_wrapper object, see document.py. 
+        return a font_wrapper object, see document.py.
         """
         if not self._font_wrappers.has_key(font.ps_name):
             number_of_fonts = len(self._font_wrappers)
@@ -1272,7 +1271,7 @@ class dsc_document(document_section, document):
 
         return self._font_wrappers[font.ps_name]
 
-        
+
     def name(cls):
         return "dsc_document"
     name = classmethod(name)
@@ -1280,7 +1279,7 @@ class dsc_document(document_section, document):
     def write_to(self, fp):
         self.header.document_needed_resources = self.document_needed_resources
         self.header.document_supplied_resources = self.resources()
-        
+
         document_section.write_to(self, fp)
 
     def embed_counter(self):
@@ -1302,7 +1301,7 @@ class dsc_document(document_section, document):
 
             if self.name not in self.document.document_custom_colors:
                 self.document.document_custom_colors.append(self.name)
-                
+
         def __str__(self):
             return self.setcolor(1)
 
@@ -1317,7 +1316,7 @@ class dsc_document(document_section, document):
 
             ret = []
             ret.append("[ /Separation %s" % ps_escape(self.name))
-            
+
             if len(self.colspec) == 1:
                 ret.append("  /DeviceGray { 1 %f sub mul 1 exch sub }" % \
                                                                 self.colspec)
@@ -1326,12 +1325,12 @@ class dsc_document(document_section, document):
                 tpl = ( m, self.colspec[0],
                         m, self.colspec[1],
                         m, self.colspec[2], )
-                
+
                 ret.append(("  /DeviceRGB { 1 exch sub dup dup "
                             "%f exch sub %f mul add exch dup dup "
                             "%f exch sub %f mul add exch dup "
                             "%f exch sub %f mul add }") % tpl)
-                
+
             elif len(self.colspec) == 4:
                 ret.append(("  /DeviceCMYK { dup %f mul exch dup %f mul exch "
                             "dup %f mul exch %f mul }") % self.colspec)
@@ -1340,7 +1339,7 @@ class dsc_document(document_section, document):
             ret.append("%f setcolor", opacity)
 
             return join(ret, "\n")
-            
+
 
 class dsc_page(page, page_section):
     def __init__(self, document, page_size="a4", label=None, ordinal=None):
@@ -1351,12 +1350,12 @@ class dsc_page(page, page_section):
 
         self.append(pagesetup_section())
         self.trailer = pagetrailer_section()
-        
+
     def write_to(self, fp):
         print >> fp, "%%Page:", self.info
         file_like_buffer.write_to(self, fp)
         print >> fp, "showpage"
-        self.trailer.write_to(fp)        
+        self.trailer.write_to(fp)
 
     def register_font(self, font, document_level=True):
         if self._font_wrappers.has_key(font.ps_name):
@@ -1415,7 +1414,7 @@ class eps_document(dsc_document):
             self.page = page # this will overwrite dsc_document's  page()
                              # function which we don't need in an EPS document
                              # since it only has one page.
-            
+
             self.append(trailer_section())
 
             document.__init__(self, title)
@@ -1435,13 +1434,13 @@ class eps_document(dsc_document):
                                    "BoundingBox comment.") )
 
         dsc_document.write_to(self, fp)
-        
+
 class eps_page(dsc_page):
     """
     This class is exactly the same as dsc_page above, except that it
     does not write a showpage operator at the end of a page.s
     """
-    
+
     def write_to(self, fp):
         """
         The write_to() method has been overloaded to prevent that a
@@ -1450,5 +1449,4 @@ class eps_page(dsc_page):
         """
         print >> fp, "%%Page:", self.info
         file_like_buffer.write_to(self, fp)
-        self.trailer.write_to(fp)        
-
+        self.trailer.write_to(fp)

@@ -27,7 +27,7 @@
 
 
 """
-Misc utility functions and classes. 
+Misc utility functions and classes.
 """
 
 import sys, os
@@ -55,7 +55,7 @@ class line_iterator:
     r"""
     Iterate over the lines in a file. Keep track of the line numbers.
     After a call to next() the file's seek indcator will point at the
-    next by after the newline. Lines are delimeted by either \r\n, \n,
+    next byte after the newline. Lines are delimeted by either \r\n, \n,
     \r, which ever comes first, in this order. Lines that are longer
     than 10240 bytes will be returned as 10240 byte strings without a
     newline (because that's the buffer size). This function is binary
@@ -78,10 +78,10 @@ class line_iterator:
             self.again = False
             self.fp.seek(self.last_line_length, 1)
             return self.last_line
-            
+
         old = self.fp.tell()
         buffer = self.fp.read(10240)
-        
+
         bytes_read = len(buffer)
         if bytes_read == 0: # eof
             raise StopIteration
@@ -106,12 +106,12 @@ class line_iterator:
 
             self.last_line_length = len(ret)
             self.fp.seek(old + self.last_line_length, 0)
-            
+
             self.last_line = ret
 
             self.line_number += 1
-            
-            return ret            
+
+            return ret
 
     readline = next
 
@@ -124,7 +124,7 @@ class line_iterator:
         self.again = True
         self.line_number -= 1
         self.fp.seek(-self.last_line_length, 1)
-        
+
 
     def __iter__(self):
         return self
@@ -135,13 +135,13 @@ def copy_linewise(frm, to, ignore_comments=False):
     This makes sure that all PostScript comments end with a regular
     Unix newline. (I'm not sure, what PostScript interpreters think of
     mixed-newline files.) Otherwise it does not alter the input stream
-    and should be binary safe.    
+    and should be binary safe.
     """
     last_char = ""
     for line in line_iterator(frm):
         if not (ignore_comments and line.startswith("%%")):
             to.write(line)
-        
+
         #if line.startswith("%"):
         #    if last_char != "\n": to.write("\n")
         #    to.write(strip(line))
@@ -186,14 +186,14 @@ def ps_escape(s, always_parenthesis=True):
     """
     if not  always_parenthesis and " " in s:
         always_parenthesis = True
-        
+
     if always_parenthesis: ret = ["("]
     for a in map(ord, s):
         if (a < 32) or (chr(a) in r"\()"):
             ret.append(r"\03%o" % a)
         else:
             ret.append(chr(a))
-            
+
     if always_parenthesis: ret.append(")")
     return join(ret, "")
 
@@ -239,15 +239,15 @@ def eight_squares(canvas, spacing=mm(6)):
                            2*box_size + spacing, top)
 
         top -= box_size + spacing
-                           
+
 
 class PFBError(Exception): pass
-        
+
 def pfb2pfa(pfb, pfa):
     """
     Convert a PostScript Type1 font in binary representation (pfb) to
     ASCII representation (pfa). This function is modeled after the
-    pfb2pfa program written in C by Piet Tutelaers. I freely admit 
+    pfb2pfa program written in C by Piet Tutelaers. I freely admit
     that I understand only rudimentarily what I'm doing here.
     """
 
@@ -265,7 +265,7 @@ def pfb2pfa(pfb, pfa):
             l4 = ord(pfb.read(1))
 
             l = l1 | l2 << 8 | l3 << 16 | l4 << 24
-            
+
         if t == 1:
             for i in range(l):
                 c = pfb.read(1)
@@ -273,7 +273,7 @@ def pfb2pfa(pfb, pfa):
                     pfa.write("\n")
                 else:
                     pfa.write(c)
-                    
+
         elif t == 2:
             for i in range(l):
                 c = pfb.read(1)
@@ -299,5 +299,3 @@ class pfb2pfa_buffer(file_like_buffer):
     def write_to(self, fp):
         self.pfb.seek(0)
         pfb2pfa(self.pfb, fp)
-
-
