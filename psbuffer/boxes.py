@@ -88,7 +88,7 @@ class Canvas(Box):
     operator is used to relocate the canvas' origin to its lower left
     corner.
     """
-    def __init__(self, x, y, w=0, h=0,
+    def __init__(self, x, y, w, h,
                  border=False, clip=False, comment=""):
         Box.__init__(self, x, y, w, h, border, clip, comment)
 
@@ -197,22 +197,69 @@ class EPSImage(EPSBox):
 
         super().__init__(fp, bb, document_level, border, clip, comment)
 
+class RasterImage(EPSBox):
+    """
+    This class creates a box from a raster image. Any image format
+    supported by the Python Image Library is supported. The class uses
+    PIL's EPS writer to create a PostScript representation of the
+    image, which is much easier to program and much faster than
+    anything I could have come up with, and uses PIL's output with the
+    _eps_image class above. Of course, as any other part of psg, this
+    is a lazy peration. When opening an image with it, PIL only reads
+    the image header to determine its size and color depth. Conversion
+    of the image takes place on writing.
+
+    This assumes 72dpi raster images. Use _eps_image.fit() if needed.
+    """
+    class raster_image_buffer:
+        def __init__(self, pil_image):
+            self.pil_image = pil_image
+
+        def write_to(self, fp):
+            self.pil_image.save(fp, "EPS")
+
+    def __init__(self, pil_image, document_level=False,
+                 border=False, clip=False, comment=""):
+        """
+        @param pil_image: Instance of PIL's image class
+        @param document_level: Boolean indicating whether the EPS file shall
+           be part of the document prolog and be referenced several times from
+           within the document or if it shall be included where it is used
+           for a single usage.
+        """
+        width, height = pil_image.size
+        bb = Rectangle(0, 0, width, height)
+
+        if pil_image.mode != "CMYK":
+            pil_image = pil_image.convert("CMYK")
+
+        super().__init__(self.raster_image_buffer(pil_image),
+                         bb, document_level, border, clip, comment)
+
+
 if __name__ == "__main__":
     from io import BytesIO
+
+    from PIL import Image
+
     from .measure import mm
     from .dsc import Document, Page
 
     document = Document()
     page = document.append(Page())
-    canvas = page.append(Canvas(mm(18), mm(18)))
+    canvas = page.append(Canvas(mm(18), mm(18), page.w-mm(36), page.h-mm(36)))
 
 
     filepath = "/Users/diedrich/Desktop/Test.eps"
     test_eps = open(filepath, "br")
     img = EPSImage(test_eps, document_level=False, border=True,
                    comment=filepath)
+    img.fit(canvas)
+
+    filename = "/Users/diedrich/Desktop/dings.png"
+    img = RasterImage(Image.open(filename),
+                      border=True, comment=filename)
     #img.fit(canvas)
-    canvas.append(img)
 
     fp = BytesIO()
     document.write_to(fp)
