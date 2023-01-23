@@ -188,27 +188,30 @@ class Rectangle(has_location, has_dimensions):
         has_dimensions.__init__(self, w, h)
 
     @classmethod
-    def from_coordinates(cls, left, top, bottom, right):
-        if left > right:
-            (left, right) = (right, left)
+    def from_coordinates(cls, llx, lly, urx, ury):
+        if llx > urx:
+            (llx, urx) = (urx, llx)
 
-        if bottom > top:
-            (top, bottom) = (bottom, top)
+        if lly > ury:
+            (lly, ury) = (ury, lly)
 
-        return cls(left, top, right-left, bottom-top)
+        return cls(llx, lly, urx-llx, ury-lly)
 
     @property
-    def left(self):
+    def llx(self):
         return self._x
 
     @property
-    def right(self):
+    def urx(self):
         return self._x + self._w
 
     @property
-    def top(self):
+    def lly(self):
         return self._y
 
     @property
-    def bottom(self):
+    def ury(self):
         return self._y + self._h
+
+    def as_tuple(self):
+        return ( self.llx, self.lly, self.urx, self.ury, )

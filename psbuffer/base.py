@@ -96,40 +96,6 @@ class PSBuffer(object):
             else:
                 fp.write(thing)
 
-
-class PSBufferWithSetup(PSBuffer):
-    def __init__(self):
-        PSBuffer.__init__(self)
-        self.head = PSBuffer()
-        self.tail = PSBuffer()
-
-    def write_to(self, fp):
-        self.head.write_to(fp)
-        PSBuffer.write_to(self, fp)
-        self.tail.write_to(fp)
-
-    def push(self, for_head, for_tail=None):
-        """
-        Append for_head to head and prepent(!) for_tail to tail. If
-        for_head and for_tail do not end in whitespace, push() will
-        append a Unix newline to them before adding them to the
-        buffer.
-        """
-        if for_head:
-            for_head = self._convert(for_head)
-            if for_head[-1] not in b"\n\t\r ":
-                for_head += b"\n"
-
-            self.head.write(for_head)
-
-        if for_tail:
-            for_tail = self._convert(for_tail)
-            if for_tail[-1] not in b"\n\t\r ":
-                for_tail = for_tail + b"\n"
-
-            self.tail.prepend(for_tail)
-
-
 class FileAsBuffer(object):
     def __init__(self, fp):
         """

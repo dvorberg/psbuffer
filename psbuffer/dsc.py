@@ -47,7 +47,7 @@ def ps_literal(value) -> bytes:
     page 36 (section 4.6, on <text>).
     """
     if type(value) in ( str, bytes ):
-        return ps_escape(value)
+        return ps_escape(value, False)
     else:
         return encode(str(value))
 
@@ -68,7 +68,7 @@ class Comment(object):
         elif type(self._value) in (str, bytes, int, float):
             self._payload = ps_literal(value)
         elif isinstance(value, collections.abc.Sequence):
-            self._payload = [ ps_literal(a) for a in value ].join(b" ")
+            self._payload = b" ".join([ ps_literal(a) for a in value ])
         else:
             raise TypeError("Can’t handle " + repr(value))
 
@@ -82,7 +82,7 @@ class Comment(object):
         elif self.keyword == b"+":
             return b"%%+ " + self._payload + b"\n"
         else:
-            return b"%%" + self.keyword + b": " + self._payload + b"\n"
+            return b"%%" + encode(self.keyword) + b": " + self._payload + b"\n"
 
 class CommentProperty(property):
     def __init__(self, comment_keyword):
@@ -106,21 +106,6 @@ class CommentListProperty(CommentProperty):
 
         return ret
 
-
-class Resource(object):
-    """
-    Model a DSC resource. A resource has
-
-    - a type (one of font, file, procset, pattern, form, encoding)
-    - a name
-    - maybe a resource_section
-    - maybe a list of setup lines
-    """
-    def __init__(self, type, name, section=None, setup_lines=None):
-        self.type = type
-        self.name = name
-        self.section = section
-        self.setup_lines = setup_lines
 
 class Default(object): pass
 
@@ -158,11 +143,57 @@ class SectionCache(list):
     def by_name(self, name):
         return [ s for s in self if s.name == name ]
 
-class Section(PSBuffer):
+class DSCBuffer(PSBuffer):
+    def __init__(self, *things):
+        self.parent = None
+        super().__init__(*things)
+
+    def write(self, *things):
+        for thing in things:
+            if isinstance(thing, DSCBuffer):
+                thing.parent = self
+                thing.on_parent_set()
+
+        super().write(*things)
+
+    def on_parent_set(self):
+        pass
+
+    def walk_up_to(self, buffer_class, default=Default):
+        here = self
+        while True:
+            if isinstance(here, buffer_class):
+                return here
+            here = here.parent
+            if here is None:
+                if default is not Default:
+                    return default
+                else:
+                    raise AttributeError()
+
+    @functools.cached_property
+    def document(self):
+        """
+        Walk up the section tree and return the document.
+        Return None if not in the tree (yet).
+        """
+        return self.walk_up_to(Document)
+
+    @functools.cached_property
+    def page(self):
+        """
+        Walk up the section tree and return the page we’re on.
+        Return None if not in the tree (yet) or not the right
+        section to ask for a page.
+        """
+        return self.walk_up_to(Page)
+
+
+class Section(DSCBuffer):
     """
     Abstract class.
 
-    Model a section of a postscript document. A section is a PSBuffer that
+    Model a section of a postscript document. A section is a DSCBuffer that
     has three types of entries:
 
       - strings - containing PostScript
@@ -231,8 +262,7 @@ class Section(PSBuffer):
         The arguments passed will be put into the beginning comment.
         Remains unused if `begin_keyword` is None.
         """
-        PSBuffer.__init__(self)
-        self.parent = None
+        super().__init__()
 
         if keyword is None:
             self.keyword = self.__class__.__name__.replace("Section", "")
@@ -244,9 +274,6 @@ class Section(PSBuffer):
         self._subsection_cache = SectionCache()
 
         self.write(self.begin_comment())
-
-    def on_parent_set(self):
-        pass
 
     def begin_comment(self):
         return Comment("Begin" + self.keyword)
@@ -260,38 +287,8 @@ class Section(PSBuffer):
                 self._comment_cache.add(thing)
             elif isinstance(thing, Section):
                 self._subsection_cache.add(thing)
-                thing.parent = self
-                thing.on_parent_set()
 
-        PSBuffer.write(self, *things)
-
-
-    def ascend_to(self, look_for):
-        here = self
-        while True:
-            if isinstance(here, look_for):
-                return here
-            here = here.parent
-            if here is None:
-                return None
-
-    @functools.cached_property
-    def document(self):
-        """
-        Walk up the section tree and return the document.
-        Return None if not in the tree (yet).
-        """
-        return self.ascend_to(Document)
-
-    @functools.cached_property
-    def page(self):
-        """
-        Walk up the section tree and return the page we’re on.
-        Return None if not in the tree (yet) or not the right
-        section to ask for a page.
-        """
-        return self.ascend_to(Page)
-
+        super().write(*things)
 
     # Comment management
     def has_comment(self, keyword):
@@ -332,7 +329,7 @@ class Section(PSBuffer):
             return self._section_cache.by_name(name)
 
     def write_to(self, fp):
-        PSBuffer.write_to(self, fp)
+        super().write_to(fp)
 
         end_comment = self.end_comment()
         if end_comment:
@@ -350,11 +347,31 @@ class Section(PSBuffer):
         return self.__class__.__name__[:-len("Section")]
 
 
+class DocumentSuppliedResourceComments(DSCBuffer):
+    def write_to(self, fp):
+        tmpbuf = PSBuffer()
+        first = True
+        for resource in self.document.prolog.resources():
+            if first:
+                keyword = "DocumentSuppliedResources"
+                first = False
+            else:
+                keyword = "+"
+
+            tmpbuf.append(Comment(keyword, resource.begin_comment().value))
+
+        tmpbuf.write_to(fp)
+
 
 class HeaderSection(Section):
     """
     Header section of a DSC complient PostScript document
     """
+    def __init__(self):
+        super().__init__()
+
+        self.append(DocumentSuppliedResourceComments())
+
     def begin_comment(self):
         return None
 
@@ -378,13 +395,14 @@ class HeaderSection(Section):
     title = CommentProperty("Title")
     version = CommentProperty("Version")
 
-    document_needed_fonts = CommentListProperty("DocumentNeededFonts")
-    document_needed_procsets = CommentListProperty("DocumentNeededProcSets")
-    document_supplied_fonts = CommentListProperty("DocumentSuppliedFonts")
-    document_supplied_procsets = CommentListProperty("DocumentSuppliedProcSets")
+    # document_needed_fonts = CommentListProperty("DocumentNeededFonts")
+    # document_needed_procsets = CommentListProperty("DocumentNeededProcSets")
+    # document_supplied_fonts = CommentListProperty("DocumentSuppliedFonts")
+    # document_supplied_procsets = CommentListProperty("DocumentSuppliedProcSets")
 
-    document_process_colors = CommentListProperty("DocumentProcessColors")
-    document_custom_colors = CommentListProperty("DocumentCustomColors")
+    # document_process_colors = CommentListProperty("DocumentProcessColors")
+    # document_custom_colors = CommentListProperty("DocumentCustomColors")
+
 
 class DefaultsSection(Section):
     page_bounding_box = CommentProperty("PageBoundingBox")
@@ -399,7 +417,10 @@ class SetupSection(Section):
     pass
 
 class PrologSection(Section):
-    pass
+    def resources(self):
+        for thing in self._things:
+            if isinstance(thing, ResourceSection):
+                yield thing
 
 class PseudoSection(Section):
     """
@@ -437,7 +458,6 @@ class PDFPageSetup(PseudoSection):
         self.trim, self.art, self.crop, self.bleed = trim, art, crop, bleed
 
     def on_parent_set(self):
-
         self.print("% Start pdfpage_setup_buffer",
                    self.trim, self.art, self.crop, self.bleed)
 
@@ -485,6 +505,10 @@ class Page(Section, has_dimensions):
         self.setup.append(PDFPageSetup(trim, art, crop, bleed))
 
 
+    def write_to(self, fp):
+        super().write_to(fp)
+        fp.write(b"showpage\n")
+
 class PageHeaderSection(Section):
     """
     Header section of a DSC complient PostScript document
@@ -502,8 +526,19 @@ class PageTrailerSection(Section):
     has_end = False
 
 
-class Resource(Section):
-    pass
+class ResourceSection(Section):
+    def __init__(self, type, *info):
+        self.type = type
+        self.info = info
+        super().__init__(has_end=True)
+
+    def begin_comment(self):
+        cmt = super().begin_comment()
+        cmt.set( (self.type,) + self.info )
+        return cmt
+
+    def __eq__(self, other):
+        return (self.type == other.type and self.info == other.info)
 
 class Trailer(Section):
     has_end = False
@@ -513,14 +548,10 @@ class Object(Section):
 
 
 class Document(Section):
-    def begin_comment(self):
-        return b"%!PS-Adobe-3.0\n"
-
-    def end_comment(self):
-        return Comment("EOF")
-
     def __init__(self):
-        Section.__init__(self, None, True)
+        super().__init__(None, True)
+
+        self._embed_counter = 0
 
         self.header = self.append(HeaderSection())
         self.defaults = self.append(DefaultsSection())
@@ -529,13 +560,27 @@ class Document(Section):
         self.pages = self.append(PagesSection())
         self.trailer = self.append(Trailer())
 
+    def begin_comment(self):
+        return b"%!PS-Adobe-3.0\n"
+
+    def end_comment(self):
+        return Comment("EOF")
+
+    def new_embed_number(self):
+        self._embed_counter += 1
+        return self._embed_counter
+
+    def add_resource(self, resource):
+        if resource not in self.prolog.resources():
+            self.prolog.append(resource)
+
 
 
 if __name__ == "__main__":
     from io import BytesIO
 
-    from boxes import Canvas
-    from measure import mm
+    from .boxes import Canvas
+    from .measure import mm
 
     document = Document()
     page = document.append(Page())
@@ -555,3 +600,5 @@ if __name__ == "__main__":
     document.write_to(fp)
 
     print(fp.getvalue().decode("ascii"))
+
+    input()

@@ -1,9 +1,51 @@
-from base import PSBuffer, PSBufferWithSetup
-from measure import Rectangle
+from uuid import uuid4 as uuid
 
-class Box(PSBufferWithSetup, Rectangle):
+from .base import PSBuffer
+from .dsc import DSCBuffer, ResourceSection
+from .measure import Rectangle
+from .utils import eps_file_without_preview, get_eps_bb
+from . import procsets
+
+class BoxBuffer(DSCBuffer):
+    def __init__(self):
+        super().__init__()
+
+        self.head = DSCBuffer()
+        self.head.parent = self
+
+        self.tail = DSCBuffer()
+        self.tail.parent = self
+
+    def write_to(self, fp):
+        self.head.write_to(fp)
+        super().write_to(fp)
+        self.tail.write_to(fp)
+
+    def push(self, for_head, for_tail=None):
+        """
+        Append for_head to head and prepent(!) for_tail to tail. If
+        for_head and for_tail do not end in whitespace, push() will
+        append a Unix newline to them before adding them to the
+        buffer.
+        """
+        if for_head:
+            for_head = self._convert(for_head)
+            if for_head[-1] not in b"\n\t\r ":
+                for_head += b"\n"
+
+            self.head.write(for_head)
+
+        if for_tail:
+            for_tail = self._convert(for_tail)
+            if for_tail[-1] not in b"\n\t\r ":
+                for_tail = for_tail + b"\n"
+
+            self.tail.prepend(for_tail)
+
+
+class Box(BoxBuffer, Rectangle):
     def __init__(self, x, y, w, h, border=False, clip=False, comment=""):
-        PSBufferWithSetup.__init__(self)
+        BoxBuffer.__init__(self)
         Rectangle.__init__(self, x, y, w, h)
 
         cmt = "%s: %s\n" % (self.__class__.__name__, comment)
@@ -24,7 +66,7 @@ class Box(PSBufferWithSetup, Rectangle):
             print >> self.head, "clip"
 
 
-    def _bonding_path(self):
+    def _bounding_path(self):
         ret = PSBuffer()
         print = ret.print
 
@@ -53,3 +95,126 @@ class Canvas(Box):
         # Move the origin to the lower left corner of the bounding box
         if x != 0 or y != 0:
             self.head.print(self.x, self.y, "translate")
+
+
+class EPSBox(Box):
+    """
+    This is the base class for eps_image and raster_image below, which
+    both embed external images into the target document as a Document
+    section.
+    """
+    def __init__(self, subfile, bb, document_level, border, clip, comment):
+        super().__init__(bb.llx, bb.lly, bb.w, bb.h, border, clip, comment)
+        self.subfile = subfile
+        self.document_level = document_level
+
+    def on_parent_set(self):
+        if self.document_level:
+            # If the EPS file is supposed to live at document level,
+            # we create a file resource in its prolog.
+
+            # The mechanism was written and excellently explained by
+            # Thomas D. Greer at http://www.tgreer.com/eps_vdp2.html .
+            identifyer = "psg_eps_file*%i" % self.document.new_embed_number()
+            resource = ResourceSection("file", str(uuid())+".eps")
+            self.document.add_resource(resource)
+
+            resource.print("/%sImageData currentfile" % identifyer)
+            resource.print("<< /Filter /SubFileDecode")
+            resource.print("   /DecodeParms << /EODCount")
+            resource.print("       0 /EODString (***EOD***) >>")
+            resource.print(">> /ReusableStreamDecode filter")
+            resource.append(self.subfile)
+            resource.print("***EOD***")
+            resource.print("def")
+            resource.print()
+            resource.print("/%s " % identifyer)
+            resource.print("<< /FormType 1")
+            resource.print("   /BBox [%f %f %f %f]" % self.as_tuple())
+            resource.print("   /Matrix [ 1 0 0 1 0 0]")
+            resource.print("   /PaintProc")
+            resource.print("   { pop")
+            resource.print("       /ostate save def")
+            resource.print("         /showpage {} def")
+            resource.print("         /setpagedevice /pop load def")
+            resource.print("         %sImageData 0 setfileposition"%identifyer)
+            resource.print("            %sImageData cvx exec"%identifyer)
+            resource.print("       ostate restore")
+            resource.print("   } bind")
+            resource.print(">> def")
+
+            # Store the ps code to use the eps file in self
+            self.print("%s execform" % identifyer)
+        else:
+            self.document.add_resource(procsets.embed_eps)
+            self.print("psg_begin_epsf")
+            self.print("%%BeginDocument")
+            self.append(self.subfile)
+            self.print()
+            self.print("%%EndDocument")
+            self.print("psg_end_epsf")
+
+    def fit(self, canvas):
+        """
+        Fit this image into `canvas` so that it will set at (0,0) filling
+        as much of the canvas as possible.  Return the size of the
+        scaled image as a pair of floats (in PostScript units).
+        """
+        w = canvas.w
+        factor = w / self.w
+        h = self.h * factor
+
+        if h > canvas.h:
+            h = canvas.h
+            factor = h / self.h
+            w = self.w * factor
+
+        canvas.print("gsave")
+        canvas.print(factor, factor, "scale")
+        canvas.append(self)
+        canvas.print("grestore")
+
+        return (w, h)
+
+class EPSImage(EPSBox):
+    """
+    Include a EPS complient PostScript document into the target
+    PostScript file.
+    """
+    def __init__(self, fp, document_level=False,
+                 border=False, clip=False, comment=""):
+        """
+        @param fp: File pointer opened for reading of the EPS file to be
+           included
+        @param document_level: Boolean indicating whether the EPS file shall
+           be part of the document prolog and be referenced several times from
+           within the document, or if it shall be included where it is used
+           for a single usage.
+        """
+        fp = eps_file_without_preview(fp)
+        bb = get_eps_bb(fp)
+        fp.seek(0)
+
+        super().__init__(fp, bb, document_level, border, clip, comment)
+
+if __name__ == "__main__":
+    from io import BytesIO
+    from .measure import mm
+    from .dsc import Document, Page
+
+    document = Document()
+    page = document.append(Page())
+    canvas = page.append(Canvas(mm(18), mm(18)))
+
+
+    filepath = "/Users/diedrich/Desktop/Test.eps"
+    test_eps = open(filepath, "br")
+    img = EPSImage(test_eps, document_level=False, border=True,
+                   comment=filepath)
+    #img.fit(canvas)
+    canvas.append(img)
+
+    fp = BytesIO()
+    document.write_to(fp)
+
+    print(fp.getvalue().decode("iso-8859-1"))
