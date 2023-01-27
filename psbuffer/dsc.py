@@ -1,9 +1,8 @@
 #!/usr/bin/python
-# -*- coding: utf-8; mode: python; ispell-local-dictionary: "english"; -*-
 
 ##  This file is part of psg, PostScript Generator.
 ##
-##  Copyright 2006-23 by Diedrich Vorberg <diedrich@tux4web.de>
+##  Copyright 2006–23 by Diedrich Vorberg <diedrich@tux4web.de>
 ##
 ##  All Rights Reserved
 ##
@@ -64,7 +63,7 @@ class Comment(object):
         self._value = value
 
         if value is None:
-            pass
+            self._payload = None
         elif type(self._value) in (str, bytes, int, float):
             self._payload = ps_literal(value)
         elif isinstance(value, collections.abc.Sequence):
@@ -84,13 +83,17 @@ class Comment(object):
         else:
             return b"%%" + encode(self.keyword) + b": " + self._payload + b"\n"
 
+    def __repr__(self):
+        return (f"<{self.__class__.__name__} {self.keyword}={self.value} "
+                f"{repr(self._payload)}")
+
 class CommentProperty(property):
     def __init__(self, comment_keyword):
         self.comment_keyword = comment_keyword
 
     def __get__(self, section, owner=None):
         if section.has_comment(self.comment_keyword):
-            return getattr(section, self.comment_keyword)
+            return section.comment(self.comment_keyword).value
         else:
             return None
 
@@ -324,9 +327,9 @@ class Section(DSCBuffer):
         @param name: Return only those subsections whoes name is 'name'.
         """
         if name is None:
-            return self._section_cache.copy()
+            return self._subsection_cache.copy()
         else:
-            return self._section_cache.by_name(name)
+            return self._subsection_cache.by_name(name)
 
     def write_to(self, fp):
         super().write_to(fp)
@@ -336,10 +339,10 @@ class Section(DSCBuffer):
             fp.write(bytes(end_comment))
 
     def __repr__(self):
-        return "<%s %s %s (%i subsections)>" % (self.__class__.__name__,
-                                                self.name,
-                                                repr(self.begin.value),
-                                                len(list(self.subsections())),)
+        return "<%s %s (%i subsections)>" % (
+            self.__class__.__name__,
+            self.name,
+            len(list(self.subsections())),)
 
 
     @property
@@ -407,7 +410,7 @@ class HeaderSection(Section):
 class DefaultsSection(Section):
     page_bounding_box = CommentProperty("PageBoundingBox")
     page_media = CommentProperty("PageMedia")
-    page_orientation = CommentProperty("Page")
+    page_orientation = CommentProperty("PageOrientation")
     page_process_colors = CommentListProperty("PageProcessColors")
     page_custom_colors = CommentListProperty("PageCustomColors")
     page_requirements = CommentListProperty("PageRequirements")
@@ -433,7 +436,10 @@ class PseudoSection(Section):
         pass
 
 class PagesSection(PseudoSection):
-    pass
+    def append(self, thing):
+        assert isinstance(thing, PageBase), TypeError
+        self.document.header.pages = len(self._things)
+        return super().append(thing)
 
 class PDFPageSetup(PseudoSection):
     """
@@ -467,12 +473,10 @@ class PDFPageSetup(PseudoSection):
         trimbox = self.boxtuple(self.trim)
         if trimbox[:2] != (0, 0, 0, 0):
             llx, lly, urx, ury = trimbox
-            self.page.page_bounding_box = (-llx, -lly,
-                                           self.page.w, self.page.h)
+            self.page.bounding_box = (-llx, -lly,
+                                      self.page.w, self.page.h)
             if llx != 0 or lly != 0:
                 self.print(llx, lly, "translate % pdfpage()")
-        else:
-            self.page.page_bounding_box = (0, 0, self.page.w, self.page.h,)
 
         self.append(self.box_command("TrimBox", self.trim))
         self.append(self.box_command("ArtBox", self.art))
@@ -482,8 +486,10 @@ class PDFPageSetup(PseudoSection):
         self.print("% End pdfpage_setup_buffer")
 
 
-class Page(Section, has_dimensions):
-
+class PageBase(Section, has_dimensions):
+    """
+    Common base class for Page and EPSPage below.
+    """
     bounding_box = CommentProperty("PageBoundingBox")
     hires_bounding_box = CommentProperty("PageHiResBoundingBox")
     custom_colors = CommentListProperty("PageCustomColors")
@@ -493,8 +499,9 @@ class Page(Section, has_dimensions):
     requirements = CommentListProperty("PageRequirements")
     resources = CommentListProperty("PageResources")
 
-    def __init__(self, size="a4", comment=None,
-                 trim=0, art=0, crop=0, bleed=0):
+    def __init__(self, size="a4", source_comment=None):
+        self.source_comment = source_comment
+
         Section.__init__(self, None, False)
         has_dimensions.__init__(self, *parse_size(size))
 
@@ -502,12 +509,32 @@ class Page(Section, has_dimensions):
         self.setup = self.append(PageSetupSection())
         self.trailer = self.append(PageTrailerSection())
 
-        self.setup.append(PDFPageSetup(trim, art, crop, bleed))
+        self.bounding_box = (0, 0, self.w, self.h,)
 
+    def begin_comment(self):
+        return Comment("Page", self.source_comment)
+
+    def end_comment(self):
+        return None
+
+class Page(PageBase):
+    """
+    The default page will flush everything drawn with the showpage operator.
+    """
+    def __init__(self, size="a4", source_comment=None,
+                 trim=0, art=0, crop=0, bleed=0):
+        super().__init__(size, source_comment)
+        self.setup.append(PDFPageSetup(trim, art, crop, bleed))
 
     def write_to(self, fp):
         super().write_to(fp)
         fp.write(b"showpage\n")
+
+class EPSPage(PageBase):
+    """
+    EPS Documents may not include the showpage operator.
+    """
+    pass
 
 class PageHeaderSection(Section):
     """
@@ -574,31 +601,39 @@ class Document(Section):
         if resource not in self.prolog.resources():
             self.prolog.append(resource)
 
+    def append(self, thing):
+        if isinstance(thing, PageBase):
+            return self.pages.append(thing)
+        else:
+            return super().append(thing)
 
+class EPSDocument(Document):
+    """
+    An EPS document is a DSC document with a small number of
+    restrictios.  The most important of which is that it contains only
+    one page which is not flushed using showpage. Also a BoundingBox
+    DSC comment in the document header is mandetory. The others can be
+    summarized in 'do what you would for a cleanly structured DSC
+    document' and 'avoid certain operators'. The details may be found
+    in the 'Encapsulated PostScript File Format Specification'
+    available from Adobe.
 
-if __name__ == "__main__":
-    from io import BytesIO
+    An EPSDocument instance is initialized with a page size and the
+    document’s one page of that size is available throug the `page`
+    attribute.
 
-    from .boxes import Canvas
-    from .measure import mm
+    The only rule from the specification enforced by this class is the
+    presence of a BoundingBox DSC comment in the document's header
+    section.
+    """
+    def __init__(self,
+                 pagesize="a4",
+                 # From Page’s constructor:
+                 source_comment=None):
+        super().__init__()
+        self.page = self.append(EPSPage(pagesize, source_comment))
 
-    document = Document()
-    page = document.append(Page())
-    canvas = page.append(Canvas(mm(18), mm(18)))
+        self.header.bounding_box = self.page.bounding_box
 
-    canvas.print("/Helvetica findfont")
-    canvas.print("20 scalefont")
-    canvas.print("setfont")
-    canvas.print("0 0 moveto")
-    canvas.print(ps_escape("Hello, world!"), " show")
-
-    #fp = open("ps_hello_world.ps", "w")
-    #document.write_to(fp)
-    #fp.close()
-
-    fp = BytesIO()
-    document.write_to(fp)
-
-    print(fp.getvalue().decode("ascii"))
-
-    input()
+    def begin_comment(self):
+        return b"%!PS-Adobe-3.0 EPSF-3.0\n"
