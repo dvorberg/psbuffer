@@ -2,17 +2,22 @@
 # When I grow up, I’ll be a unit test!
 
 from io import BytesIO
-from .base import PSBuffer
 
-b = PSBuffer()
+from psbuffer.base import PSBuffer
+from psbuffer import colors
 
-for a in ("white", "black", "red", "green", "blue"):
-    b.print(globals().get(a), f"% {a}")
+def main():
+    b = PSBuffer()
 
-b.print()
-b.print(WebColor("#FFBE33"), b'% WebColor("#FFBE33"))')
+    for a in ("white", "black", "red", "green", "blue"):
+        b.print(getattr(colors, a), f"% {a}")
 
-fp = BytesIO()
-b.write_to(fp)
+    b.print()
+    b.print(colors.WebColor("#FFBE33"), b'% WebColor("#FFBE33"))')
 
-print(fp.getvalue().decode("ascii"))
+    fp = BytesIO()
+    b.write_to(fp)
+
+    print(fp.getvalue().decode("ascii"))
+
+main()

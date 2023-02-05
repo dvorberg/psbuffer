@@ -1,5 +1,7 @@
 ######################################################################
 # When I grow up, I’ll be a unit test!
+import io, os.path as op, tempfile
+from psbuffer.base import PSBuffer, Subfile
 
 testfile_contents = b'''\
 1234567890
@@ -11,8 +13,6 @@ This is the end of the file -> .'''
 
 
 # Let’s test this a little.
-
-import os.path as op, tempfile
 
 
 b = PSBuffer(b"1", "2", 3, 4.0)
