@@ -299,3 +299,15 @@ class BytesIOSubfile:
 
     def __getattr__(self, name):
         return getattr(self.fp, name)
+
+class FileWrapper(object):
+    def __init__(self, fp):
+        self.fp = fp
+
+    def write_to(self, fp):
+        while True:
+            r = self.fp.read(1024)
+            if not r:
+                break
+            else:
+                fp.write(r) # .replace(b"\r", b"\n")
