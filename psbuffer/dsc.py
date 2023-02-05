@@ -30,7 +30,6 @@ Document Structuring Conventions as described in Adobe's Specifications
 Version 3.0 available at
 U{http://partners.adobe.com/public/developer/ps/index_specs.html}.
 """
-
 import collections.abc, functools
 
 from .base import PSBuffer, encode
@@ -75,17 +74,31 @@ class Comment(object):
     def value(self):
         return self._value
 
-    def __bytes__(self):
+    def write_to(self, fp):
         if self._value is None:
-            return b"%%" + encode(self.keyword) + b"\n"
+            fp.write(b"%%" + encode(self.keyword) + b"\n")
         elif self.keyword == b"+":
-            return b"%%+ " + self._payload + b"\n"
+            fp.write(b"%%+ " + self._payload + b"\n")
         else:
-            return b"%%" + encode(self.keyword) + b": " + self._payload + b"\n"
+            fp.write(b"%%" + encode(self.keyword) + b": " + \
+                     self._payload + b"\n")
 
     def __repr__(self):
         return (f"<{self.__class__.__name__} {self.keyword}={self.value} "
                 f"{repr(self._payload)}")
+
+class LazyComment(Comment):
+    def __init__(self, keyword, callback):
+        super().__init__(keyword, None)
+        self._callback = callback
+
+    @property
+    def value(self):
+        raise NotImplemented()
+
+    def write_to(self, fp):
+        self.set(self._callback())
+        return super().write_to(fp)
 
 class CommentProperty(property):
     def __init__(self, comment_keyword):
@@ -190,6 +203,7 @@ class DSCBuffer(PSBuffer):
         section to ask for a page.
         """
         return self.walk_up_to(Page)
+
 
 
 class Section(DSCBuffer):
@@ -336,7 +350,7 @@ class Section(DSCBuffer):
 
         end_comment = self.end_comment()
         if end_comment:
-            fp.write(bytes(end_comment))
+            end_comment.write_to(fp)
 
     def __repr__(self):
         return "<%s %s (%i subsections)>" % (
@@ -373,6 +387,8 @@ class HeaderSection(Section):
     def __init__(self):
         super().__init__()
 
+        self.append(LazyComment("Pages", self.pages_value))
+        self.append(LazyComment("BoundingBox", self.bounding_box_value))
         self.append(DocumentSuppliedResourceComments())
 
     def begin_comment(self):
@@ -380,6 +396,26 @@ class HeaderSection(Section):
 
     def end_comment(self):
         return Comment("EndComments")
+
+    def pages_value(self):
+        return self.document.pages.page_count
+
+    def bounding_box_value(self):
+        pages = self.document.pages.page_objects
+
+        if len(self._things) > 0:
+            llx, lly, urx, ury = pages[0].bounding_box
+
+            for page in pages[1:]:
+                a, b, c, d = page.bounding_box
+                if a < llx: llx = a
+                if b < lly: lly = b
+                if c > urx: urx = c
+                if d > ury: ury = d
+
+            return (llx, lly, urx, ury,)
+        else:
+            return None
 
     # properties that refer to document meta data
     bounding_box = CommentProperty("BoundingBox")
@@ -438,8 +474,26 @@ class PseudoSection(Section):
 class PagesSection(PseudoSection):
     def append(self, thing):
         assert isinstance(thing, PageBase), TypeError
-        self.document.header.pages = len(self._things)
         return super().append(thing)
+
+    def ordinal_of(self, page):
+        assert isinstance(page, PageBase), TypeError
+        # Things starts with b'' so the index of the pages
+        # is 1-based.
+        return self._things.index(page)
+
+    @property
+    def page_objects(self):
+        return self._things[1:]
+
+    @property
+    def page_count(self):
+        # self._things[0] == b"" !
+        return len(self._things) - 1
+
+    def __iter__(self):
+        for page in self._things[1:]:
+            yield page
 
 class PDFPageSetup(PseudoSection):
     """
@@ -473,8 +527,7 @@ class PDFPageSetup(PseudoSection):
         trimbox = self.boxtuple(self.trim)
         if trimbox[:2] != (0, 0, 0, 0):
             llx, lly, urx, ury = trimbox
-            self.page.bounding_box = (-llx, -lly,
-                                      self.page.w, self.page.h)
+            self.page.bounding_box = (-llx, -lly, self.page.w, self.page.h)
             if llx != 0 or lly != 0:
                 self.print(llx, lly, "translate % pdfpage()")
 
@@ -499,8 +552,8 @@ class PageBase(Section, has_dimensions):
     requirements = CommentListProperty("PageRequirements")
     resources = CommentListProperty("PageResources")
 
-    def __init__(self, size="a4", source_comment=None):
-        self.source_comment = source_comment
+    def __init__(self, size="a4", label=None):
+        self.label = label
 
         Section.__init__(self, None, False)
         has_dimensions.__init__(self, *parse_size(size))
@@ -509,10 +562,19 @@ class PageBase(Section, has_dimensions):
         self.setup = self.append(PageSetupSection())
         self.trailer = self.append(PageTrailerSection())
 
+        # Make sure the page has a bounding_box.
         self.bounding_box = (0, 0, self.w, self.h,)
 
     def begin_comment(self):
-        return Comment("Page", self.source_comment)
+        return LazyComment("Page", self.begin_comment_value)
+
+    def begin_comment_value(self):
+        ordinal = self.ordinal
+        return ( self.label or ordinal, ordinal, )
+
+    @functools.cached_property
+    def ordinal(self):
+        return self.document.pages.ordinal_of(self)
 
     def end_comment(self):
         return None
@@ -521,9 +583,9 @@ class Page(PageBase):
     """
     The default page will flush everything drawn with the showpage operator.
     """
-    def __init__(self, size="a4", source_comment=None,
+    def __init__(self, size="a4", label=None,
                  trim=0, art=0, crop=0, bleed=0):
-        super().__init__(size, source_comment)
+        super().__init__(size, label)
         self.setup.append(PDFPageSetup(trim, art, crop, bleed))
 
     def write_to(self, fp):
@@ -557,7 +619,7 @@ class ResourceSection(Section):
     def __init__(self, type, *info):
         self.type = type
         self.info = info
-        super().__init__(has_end=True)
+        super().__init__(keyword="Resource", has_end=True)
 
     def begin_comment(self):
         cmt = super().begin_comment()
@@ -629,9 +691,9 @@ class EPSDocument(Document):
     def __init__(self,
                  pagesize="a4",
                  # From Page’s constructor:
-                 source_comment=None):
+                 label=None):
         super().__init__()
-        self.page = self.append(EPSPage(pagesize, source_comment))
+        self.page = self.append(EPSPage(pagesize, label))
 
         self.header.bounding_box = self.page.bounding_box
 
