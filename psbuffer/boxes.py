@@ -1,6 +1,6 @@
 from uuid import uuid4 as uuid
 
-from .base import PSBuffer
+from .base import PSBuffer, FileWrapper
 from .dsc import DSCBuffer, ResourceSection
 from .measure import Rectangle
 from .utils import eps_file_without_preview, get_eps_bb
@@ -48,22 +48,24 @@ class Box(BoxBuffer, Rectangle):
         BoxBuffer.__init__(self)
         Rectangle.__init__(self, x, y, w, h)
 
-        cmt = "%s: %s\n" % (self.__class__.__name__, comment)
-        self.push("gsave % begin " + cmt,
-                  "grestore % end " + cmt)
+        self._comment = "%s: %s\n" % (self.__class__.__name__, comment)
+        self.push("gsave % begin " + self._comment,
+                  "grestore % end " + self._comment)
 
         if border:
-            self.head.print(self._bounding_path())
+            self.head.print("gsave % border=True of ", self._comment)
+            self.head.write(self._bounding_path())
 
             # Set color to black, line type to solid and width to 'hairline'
             self.head.print("0 setgray [] 0 setdash .1 setlinewidth")
 
             # Draw the line
             self.head.print("stroke")
+            self.head.print("grestore % border=True of ", self._comment)
 
         if clip:
-            self.head.print(self._bounding_path())
-            print >> self.head, "clip"
+            self.head.write(self._bounding_path())
+            self.head.head.print("clip")
 
 
     def _bounding_path(self):
@@ -105,7 +107,7 @@ class EPSBox(Box):
     """
     def __init__(self, subfile, bb, document_level, border, clip, comment):
         super().__init__(bb.llx, bb.lly, bb.w, bb.h, border, clip, comment)
-        self.subfile = subfile
+        self.subfile = FileWrapper(subfile)
         self.document_level = document_level
 
     def on_parent_set(self):
@@ -169,10 +171,10 @@ class EPSBox(Box):
             factor = h / self.h
             w = self.w * factor
 
-        canvas.print("gsave")
-        canvas.print(factor, factor, "scale")
+        canvas.print("gsave % fit() of", self._comment)
+        canvas.print(factor, factor, "scale", "% fit() of ", self._comment)
         canvas.append(self)
-        canvas.print("grestore")
+        canvas.print("grestore % fit() of", self._comment)
 
         return (w, h)
 
