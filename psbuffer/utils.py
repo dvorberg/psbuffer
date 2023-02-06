@@ -53,7 +53,7 @@ class LineIterator(object):
 
     FIXME: This needs to be rewriten! Best in C, I guess.
     """
-    def __init__(self, fp:typing.BinaryIO):
+    def __init__(self, fp):
         """
         Make sure to open fp binary mode so no newline conversion is
         performed.
@@ -62,16 +62,23 @@ class LineIterator(object):
         self.line_number = 0
         self.last_line_pos = None
 
+        if hasattr(fp, "encoding"):
+            self.unix_newline = "\n"
+            self.mac_newline = "\r"
+        else:
+            self.unix_newline = b"\n"
+            self.mac_newline = b"\r"
+
     def __next__(self):
         old = self.fp.tell()
-        buffer = self.fp.read(10240)
+        buffer = self.fp.read(512)
 
         bytes_read = len(buffer)
         if bytes_read == 0: # eof
             raise StopIteration
         else:
-            unix_index = buffer.find(b"\n")
-            mac_index = buffer.find(b"\r")
+            unix_index = buffer.find(self.unix_newline)
+            mac_index = buffer.find(self.mac_newline)
 
             if unix_index == -1 and mac_index == -1:
                 return buffer
@@ -95,7 +102,7 @@ class LineIterator(object):
 
             return ret
 
-    readline = next
+    readline = __next__
 
     def rewind(self):
         """
