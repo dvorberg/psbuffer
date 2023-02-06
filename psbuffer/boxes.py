@@ -1,7 +1,7 @@
 from uuid import uuid4 as uuid
 
 from .base import PSBuffer, FileWrapper
-from .dsc import DSCBuffer, ResourceSection
+from .dsc import DSCBuffer, ResourceSection, Comment
 from .measure import Rectangle
 from .utils import eps_file_without_preview, get_eps_bb
 from . import procsets
@@ -111,17 +111,20 @@ class EPSBox(Box):
         self.document_level = document_level
 
     def on_parent_set(self):
+        self.ps_identifyer = "psg_eps_file*%i" % (
+            self.document.new_embed_number(), )
+        self.resource_identifyer = str(uuid())+".eps"
+
         if self.document_level:
             # If the EPS file is supposed to live at document level,
             # we create a file resource in its prolog.
 
             # The mechanism was written and excellently explained by
             # Thomas D. Greer at http://www.tgreer.com/eps_vdp2.html .
-            identifyer = "psg_eps_file*%i" % self.document.new_embed_number()
-            resource = ResourceSection("file", str(uuid())+".eps")
+            resource = ResourceSection("file", self.resource_identifyer)
             self.document.add_resource(resource)
 
-            resource.print("/%sImageData currentfile" % identifyer)
+            resource.print("/%sImageData currentfile" % self.ps_identifyer)
             resource.print("<< /Filter /SubFileDecode")
             resource.print("   /DecodeParms << /EODCount")
             resource.print("       0 /EODString (***EOD***) >>")
@@ -130,7 +133,7 @@ class EPSBox(Box):
             resource.print("***EOD***")
             resource.print("def")
             resource.print()
-            resource.print("/%s " % identifyer)
+            resource.print("/%s " % self.ps_identifyer)
             resource.print("<< /FormType 1")
             resource.print("   /BBox [%f %f %f %f]" % self.as_tuple())
             resource.print("   /Matrix [ 1 0 0 1 0 0]")
@@ -139,21 +142,23 @@ class EPSBox(Box):
             resource.print("       /ostate save def")
             resource.print("         /showpage {} def")
             resource.print("         /setpagedevice /pop load def")
-            resource.print("         %sImageData 0 setfileposition"%identifyer)
-            resource.print("            %sImageData cvx exec"%identifyer)
+            resource.print("         %sImageData 0 setfileposition" % (
+                                                          self.ps_identifyer) )
+            resource.print("            %sImageData cvx exec" % (
+                                                          self.ps_identifyer) )
             resource.print("       ostate restore")
             resource.print("   } bind")
             resource.print(">> def")
 
             # Store the ps code to use the eps file in self
-            self.print("%s execform" % identifyer)
+            self.print("%s execform" % self.ps_identifyer)
         else:
             self.document.add_resource(procsets.embed_eps)
             self.print("psg_begin_epsf")
-            self.print("%%BeginDocument")
+            self.append(Comment("BeginDocument", self.resource_identifyer))
             self.append(self.subfile)
             self.print()
-            self.print("%%EndDocument")
+            self.append(Comment("EndDocument"))
             self.print("psg_end_epsf")
 
     def fit(self, canvas):
