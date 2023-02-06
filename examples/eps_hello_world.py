@@ -5,8 +5,7 @@ from psbuffer.boxes import Canvas
 from psbuffer.measure import mm
 from psbuffer.utils import ps_escape
 
-document = EPSDocument( (mm(100), mm(100),),
-                        "The EPS page")
+document = EPSDocument( (mm(100), mm(100),) )
 canvas = document.page.append(Canvas(mm(10), mm(10), mm(80), mm(80)))
 
 canvas.print("/Helvetica findfont")
