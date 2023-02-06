@@ -215,3 +215,7 @@ class Rectangle(has_location, has_dimensions):
 
     def as_tuple(self):
         return ( self.llx, self.lly, self.urx, self.ury, )
+
+    @property
+    def bounding_box(self):
+        return self.as_tuple()
