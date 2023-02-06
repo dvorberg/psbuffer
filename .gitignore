@@ -134,3 +134,5 @@ dmypy.json
 # Pyre type checker
 .pyre/
 examples/out.ps
+examples/out.eps
+examples/x.ps
