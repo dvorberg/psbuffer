@@ -87,6 +87,7 @@ class Comment(object):
         return (f"<{self.__class__.__name__} {self.keyword}={self.value} "
                 f"{repr(self._payload)}")
 
+
 class LazyComment(Comment):
     def __init__(self, keyword, callback):
         super().__init__(keyword, None)
@@ -100,18 +101,65 @@ class LazyComment(Comment):
         self.set(self._callback())
         return super().write_to(fp)
 
+class _BoundingBoxCommentBase(Comment):
+    def __init__(self, keyword, numeric_type, container, value=None):
+        self.container = container
+        self.numeric_type = numeric_type
+
+        if isinstance(container, PageBase):
+            keyword = "Page" + keyword
+
+        super().__init__(keyword, value)
+
+    def set(self, value):
+        if hasattr(self.container, "calculate_bounding_box"):
+            if value is not None:
+                raise AttributeError("The BoundBox of this container is "
+                                     "calculated by calculate_bounding_box().")
+        else:
+            self.container.__bounding_box = value
+
+    @property
+    def value(self):
+        if hasattr(self.container, "calculate_bounding_box"):
+            return self.container.calculate_bounding_box()
+        else:
+            return self.container.__bounding_box
+
+    def write_to(self, fp):
+        value = self.value
+
+        if value is None:
+            pass
+        else:
+            value = [ ps_literal(self.numeric_type(c)) for c in value ]
+            fp.write(b"%%" + encode(self.keyword) + b": " + \
+                     b" ".join(value) + b"\n")
+
+class BoundingBoxComment(_BoundingBoxCommentBase):
+    def __init__(self, container, value=None):
+        super().__init__("BoundingBox", int, container, value)
+
+class HiResBoundingBoxComment(_BoundingBoxCommentBase):
+    def __init__(self, container, value=None):
+        super().__init__("HiResBoundingBox", float, container, value)
+
 class CommentProperty(property):
     def __init__(self, comment_keyword):
         self.comment_keyword = comment_keyword
 
     def __get__(self, section, owner=None):
-        if section.has_comment(self.comment_keyword):
-            return section.comment(self.comment_keyword).value
+        if self.comment_keyword in section.property_comments:
+            return section.property_comments[self.comment_keyword].value
         else:
-            return None
+            raise AttributeError(self.comment_keyword)
 
     def __set__(self, section, value):
-        section.set_comment_value(self.comment_keyword, value)
+        if not self.comment_keyword in section.property_comments:
+            section.property_comments.add(Comment(self.comment_keyword, value))
+        else:
+            section.property_comments[self.comment_keyword].set(value)
+
 
 class CommentListProperty(CommentProperty):
     def __get__(self, section, owner=None):
@@ -125,21 +173,21 @@ class CommentListProperty(CommentProperty):
 
 class Default(object): pass
 
+
 class CommentCache(dict):
-    def __init__(self, *initial_comments):
+    def __init__(self, container, *initial_comments):
         dict.__init__(self)
+        self.container = container
 
         for comment in initial_comments:
             self.add(comment)
 
     def add(self, comment:Comment):
+        if comment.keyword in self:
+            raise KeyError(f"A {comment.keyword} already exists.")
+
         self[comment.keyword] = comment
-
-    def __contains__(self, key):
-        return dict.__contains__(self, key)
-
-    def __getitem__(self, key):
-        return dict.__getitem__(self, key)
+        self.container.append(comment)
 
     def get(self, key, default=Default):
         ret = dict.get(self, key, default)
@@ -158,6 +206,7 @@ class SectionCache(list):
 
     def by_name(self, name):
         return [ s for s in self if s.name == name ]
+
 
 class DSCBuffer(PSBuffer):
     def __init__(self, *things):
@@ -274,7 +323,7 @@ class Section(DSCBuffer):
     @cvar subsections: List of strings naming section_?? classes of those
        subsections that may occur in this section.
     """
-    def __init__(self, keyword=None, has_end=False):
+    def __init__(self, keyword=None, has_end=False, initial_comments=[]):
         """
         The arguments passed will be put into the beginning comment.
         Remains unused if `begin_keyword` is None.
@@ -287,8 +336,8 @@ class Section(DSCBuffer):
             self.keyword = keyword
         self.has_end = has_end
 
-        self._comment_cache = CommentCache()
-        self._subsection_cache = SectionCache()
+        self.property_comments = CommentCache(self, *initial_comments)
+        self.subsection_cache = SectionCache()
 
         self.write(self.begin_comment())
 
@@ -300,39 +349,17 @@ class Section(DSCBuffer):
 
     def write(self, *things):
         for thing in things:
-            if isinstance(thing, Comment):
-                self._comment_cache.add(thing)
-            elif isinstance(thing, Section):
-                self._subsection_cache.add(thing)
+            if isinstance(thing, Section):
+                self.subsection_cache.add(thing)
 
         super().write(*things)
-
-    # Comment management
-    def has_comment(self, keyword):
-        return keyword in self._comment_cache
-
-    def set_comment_value(self, keyword, value):
-        if self.has_comment(keyword):
-            self.comment(keyword).set(value)
-        else:
-            comment = Comment(keyword, value)
-            self.append(comment)
-
-    def comment(self, comment_keyword):
-        return self._comment_cache.get(comment_keyword)
-
-    def comments(self):
-        """
-        Return an iterator over the comments in this section.
-        """
-        return self._comment_cache.values()
 
     # Subsection management
     def has_subsection(self, name):
         """
         Determine whether this section contains a subsection by that name.
         """
-        return name in self._subsection_cache
+        return name in self.subsection_cache
 
     def subsections(self, name=None):
         """
@@ -341,9 +368,9 @@ class Section(DSCBuffer):
         @param name: Return only those subsections whoes name is 'name'.
         """
         if name is None:
-            return self._subsection_cache.copy()
+            return self.subsection_cache.copy()
         else:
-            return self._subsection_cache.by_name(name)
+            return self.subsection_cache.by_name(name)
 
     def write_to(self, fp):
         super().write_to(fp)
@@ -365,6 +392,10 @@ class Section(DSCBuffer):
 
 
 class DocumentSuppliedResourceComments(DSCBuffer):
+    def __init__(self, document):
+        super().__init__()
+        self.document = document
+
     def write_to(self, fp):
         tmpbuf = PSBuffer()
         first = True
@@ -384,38 +415,11 @@ class HeaderSection(Section):
     """
     Header section of a DSC complient PostScript document
     """
-    def __init__(self):
-        super().__init__()
-
-        self.append(LazyComment("Pages", self.pages_value))
-        self.append(LazyComment("BoundingBox", self.bounding_box_value))
-        self.append(DocumentSuppliedResourceComments())
-
     def begin_comment(self):
         return None
 
     def end_comment(self):
         return Comment("EndComments")
-
-    def pages_value(self):
-        return self.document.pages.page_count
-
-    def bounding_box_value(self):
-        pages = self.document.pages.page_objects
-
-        if len(self._things) > 0:
-            llx, lly, urx, ury = pages[0].bounding_box
-
-            for page in pages[1:]:
-                a, b, c, d = page.bounding_box
-                if a < llx: llx = a
-                if b < lly: lly = b
-                if c > urx: urx = c
-                if d > ury: ury = d
-
-            return (llx, lly, urx, ury,)
-        else:
-            return None
 
     # properties that refer to document meta data
     bounding_box = CommentProperty("BoundingBox")
@@ -559,6 +563,11 @@ class PageBase(Section, has_dimensions):
         has_dimensions.__init__(self, *parse_size(size))
 
         self.header = self.append(PageHeaderSection())
+        self.property_comments = self.header.property_comments
+
+        self.property_comments.add(BoundingBoxComment(self))
+        self.property_comments.add(HiResBoundingBoxComment(self))
+
         self.setup = self.append(PageSetupSection())
         self.trailer = self.append(PageTrailerSection())
 
@@ -643,6 +652,15 @@ class Document(Section):
         self._embed_counter = 0
 
         self.header = self.append(HeaderSection())
+        self.property_comments = self.header.property_comments
+
+        self.property_comments.add(
+            LazyComment("Pages", lambda: self.pages.page_count))
+        self.property_comments.add(BoundingBoxComment(self))
+        self.property_comments.add(HiResBoundingBoxComment(self))
+
+        self.header.append(DocumentSuppliedResourceComments(self))
+
         self.defaults = self.append(DefaultsSection())
         self.prolog = self.append(PrologSection())
         self.setup = self.append(SetupSection())
@@ -669,6 +687,24 @@ class Document(Section):
         else:
             return super().append(thing)
 
+    def calculate_bounding_box(self):
+        pages = self.pages.page_objects
+
+        if len(self._things) > 0:
+            llx, lly, urx, ury = pages[0].bounding_box
+
+            for page in pages[1:]:
+                a, b, c, d = page.bounding_box
+                if a < llx: llx = a
+                if b < lly: lly = b
+                if c > urx: urx = c
+                if d > ury: ury = d
+
+            return (llx, lly, urx, ury,)
+        else:
+            return None
+
+
 class EPSDocument(Document):
     """
     An EPS document is a DSC document with a small number of
@@ -688,14 +724,9 @@ class EPSDocument(Document):
     presence of a BoundingBox DSC comment in the document's header
     section.
     """
-    def __init__(self,
-                 pagesize="a4",
-                 # From Page’s constructor:
-                 label=None):
+    def __init__(self, pagesize="a4"):
         super().__init__()
-        self.page = self.append(EPSPage(pagesize, label))
-
-        self.header.bounding_box = self.page.bounding_box
+        self.page = self.append(EPSPage(pagesize, None))
 
     def begin_comment(self):
         return b"%!PS-Adobe-3.0 EPSF-3.0\n"
