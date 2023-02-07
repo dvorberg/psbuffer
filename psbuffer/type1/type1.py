@@ -30,12 +30,12 @@ This module contains code to handle PostScript Type1 fonts.
 
 import re
 
-from . import glyph_name_to_codepoint
-from ..base import Font, GlyphMetric, FontMetrics
+from ..fontbase import ( Font, GlyphMetric, FontMetrics, FontResourceSection,
+                         encoding_tables, glyph_name_to_codepoint, )
 from ..measure import Rectangle
-
-from .encoding_tables import encoding_tables
 from .afm_parser import parse_afm
+from ..utils import pfb2pfa_Buffer
+from ..base import FileAsBuffer
 
 class global_info(property):
     """
@@ -47,6 +47,29 @@ class global_info(property):
 
     def __get__(self, metrics, owner="dummy"):
         return metrics.FontMetrics.get(self.keyword, None)
+
+class Type1ResourceSection(FontResourceSection):
+    def __init__(self, font):
+        super().__init__(font)
+
+        if hasattr(font.outline_file, "encoding"):
+            fp = font.outline_file.buffer
+        else:
+            fp = font.outline_file
+
+        fp.seek(0)
+
+        first_line = fp.read(30)
+        first_byte = first_line[0]
+        fp.seek(0)
+
+        if first_byte == 128: # pfb
+            self.append(pfb2pfa_Buffer(fp))
+        else:
+            if not first_line.startswith(b"%!PS-AdobeFont"):
+                raise NotImplementedError("Not a pfa/b file!")
+            else:
+                self.append(FileAsBuffer(fp))
 
 class Type1(Font):
     """
@@ -66,14 +89,20 @@ class Type1(Font):
 
         metrics = AFMMetrics(metrics_file)
 
-        font.__init__(self,
-                      metrics.ps_name,
-                      metrics.full_name,
-                      metrics.family_name,
-                      metrics.weight,
-                      metrics.italic,
-                      metrics.fixed_width,
-                      metrics)
+        super().__init__(metrics.ps_name,
+                         metrics.full_name,
+                         metrics.family_name,
+                         metrics.weight,
+                         metrics.italic,
+                         metrics.fixed_width,
+                         metrics)
+
+    @property
+    def resource_section(self):
+        ret = Type1ResourceSection(self)
+        ret.print(f"% Resource section for {self.ps_name} goes here, soon!")
+        return ret
+
 
 class AFMMetrics(FontMetrics):
     gs_uni_re = re.compile("uni([A-Fa-f0-9]+).*")
