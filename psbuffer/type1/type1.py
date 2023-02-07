@@ -99,9 +99,7 @@ class Type1(Font):
 
     @property
     def resource_section(self):
-        ret = Type1ResourceSection(self)
-        ret.print(f"% Resource section for {self.ps_name} goes here, soon!")
-        return ret
+        return Type1ResourceSection(self)
 
 
 class AFMMetrics(FontMetrics):
