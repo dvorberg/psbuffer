@@ -250,7 +250,7 @@ def pfb2pfa(pfb:typing.BinaryIO, pfa:typing.BinaryIO):
             raise PFBError("Error in PFB file: unknown field type %i!" % t)
 
 
-class pfb2pfaBuffer(object):
+class pfb2pfa_Buffer(object):
     """
     A pfa2pfb buffer is a file like buffer which, initialized from a
     pfb file, will write a pfa file into its output file.
