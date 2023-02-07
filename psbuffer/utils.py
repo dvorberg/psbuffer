@@ -60,7 +60,8 @@ class LineIterator(object):
         """
         self.fp = fp
         self.line_number = 0
-        self.last_line_pos = None
+        self.last_line = None
+        self.rolled_back = False
 
         if hasattr(fp, "encoding"):
             self.unix_newline = "\n"
@@ -70,6 +71,10 @@ class LineIterator(object):
             self.mac_newline = b"\r"
 
     def __next__(self):
+        if self.rolled_back:
+            self.rolled_back = False
+            return self.last_line
+
         old = self.fp.tell()
         buffer = self.fp.read(512)
 
@@ -81,6 +86,7 @@ class LineIterator(object):
             mac_index = buffer.find(self.mac_newline)
 
             if unix_index == -1 and mac_index == -1:
+                self.last_line = buffer
                 return buffer
             else:
                 if unix_index == -1: unix_index = len(buffer)
@@ -98,7 +104,7 @@ class LineIterator(object):
             self.fp.seek(old + len(ret), 0)
 
             self.line_number += 1
-            self.last_line_pos = old
+            self.last_line = ret
 
             return ret
 
@@ -108,15 +114,13 @@ class LineIterator(object):
         """
         'Rewind' the file to the line before this one.
 
-        @raises: OSError (from file.seek())
+        @raises: IOError
         """
-        if self.last_line_pos is None:
-            raise IOError("Cannot rewind more than one line or "
-                          "no line read, yet.")
-
-        self.fp.seek(self.last_line_pos, 0)
-        self.line_number -= 1
-        self.last_line_pos = None
+        if self.last_line is None or self.rolled_back:
+            raise IOError("Cannot rollback LineIterator.")
+        else:
+            self.rolled_back = True
+            return self.last_line
 
     def __iter__(self):
         return self
