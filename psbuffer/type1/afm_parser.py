@@ -89,36 +89,63 @@ from warnings import warn
 
 from ..utils import LineIterator
 
-class AFMParseError(Exception):
+
+def _null_debug(*args, **kw):
     pass
 
-ParseError = AFMParseError
+def _stderr_debug(*args, **kw):
+    print(*args, **kw, file=sys.stderr)
+
+debug = _null_debug
+
 
 # Re-define a couple of things in Python 2 fashion.
 
-strip = "".strip
-split = "".split
+def strip(s):
+    return s.strip()
 
-def join(l, s):
+def split(s, delimiter):
+    return s.split(delimiter)
+
+def join(l, s=" "):
     return s.join(l)
 
 def filter(condition, things):
     return [ thing for thing in things if condition(thing) ]
 
+def lower(s):
+    return s.lower()
+
+def upper(s):
+    return s.upper()
+
 whitespace_re = re.compile(r"\s+")
 def splitfields(s):
     return whitespace_re.split(s.strip())
 
-# Redefine int and float to raise ParseError instead of ValueError
+
+# Parse error exception
+
+class AFMParseError(Exception):
+    pass
+
+
+# Redefine int and float to raise AFMParseError instead of ValueError
 
 py_int = int
 
-def int(s, base=10):
+def int(value, base=10):
+    if type(value) is py_int:
+        return value
+
     try:
-        return py_int(s, base)
-    except ValueError:
-        raise ParseError(
-            "Illegal representaion of an integer: %s" % repr(value))
+        return py_int(value, base)
+    except (TypeError, ValueError):
+        pass
+
+    raise AFMParseError(
+        "Illegal representaion of an integer: %s (%s)" % ( repr(value),
+                                                           type(value), ))
 
 py_float = float
 
@@ -126,7 +153,7 @@ def float(s):
     try:
         return py_float(s)
     except ValueError:
-        raise ParseError("Illegal representaion of a number: %s" % repr(value))
+        raise AFMParseError("Illegal representaion of a number: %s" % repr(value))
 
 
 def float_tuple(elements, size):
@@ -158,7 +185,7 @@ def ps_hex_int(data):
     """
     match = ps_hex_int_re.match(data)
     if match is None:
-        raise ParseError("Illegal hexadecimal representation: %s" % repr(data))
+        raise AFMParseError("Illegal hexadecimal representation: %s" % repr(data))
     else:
         data = match.group(1)
 
@@ -190,7 +217,7 @@ class _keywords(list):
             if a.__name__ == keyword:
                 return a
 
-        raise ParseError("Unknown keyword: %s" % repr(keyword))
+        raise AFMParseError("Unknown keyword: %s" % repr(keyword))
 
 class _sections(_keywords):
     def start_keywords(self):
@@ -240,7 +267,7 @@ class section(keyword, dict):
       Start/StopSection keywords may be omited (I hate this feature!)
     @ivar _all: List containing all entries to the dict.
     """
-    info_cls = int
+    info_cls = "int"
     optional = False
     multiple = 0
     implicit_start_stop = False
@@ -264,9 +291,10 @@ class section(keyword, dict):
 
         try:
             if self.info is not None:
-                self.info = self.info_cls(self.info)
+                info_cls = globals()[self.info_cls]
+                self.info = info_cls(self.info)
         except ValueError:
-            raise ParseError("Can't parse %s as %s" % \
+            raise AFMParseError("Can’t parse %s as %s" % \
                              ( repr(info), self.info_cls.__name__, ))
 
         self.implicit_keyword = implicit_keyword
@@ -277,17 +305,21 @@ class section(keyword, dict):
     def parse(self, line_iterator, parent):
         while True:
             try:
-                line = line_iterator.readline()
+                line = next(line_iterator)
             except StopIteration:
                 if self.implicit_keyword:
                     break
                 else:
-                    raise ParseError("Unexpected end of file")
+                    raise AFMParseError("Unexpected end of file")
+
+            debug("*"*60)
+            debug("Input line:", repr(line))
 
             if strip(line) == "": # empty line
                 continue
 
             parts = splitfields(line)
+            debug("part =", parts)
             keyword = parts[0]
 
             if len(parts) > 1:
@@ -338,7 +370,7 @@ class section(keyword, dict):
 
                 if not found:
                     tpl = ( self.__class__.__name__, repr(line), )
-                    raise ParseError("Unknown line in %s section: %s " % tpl)
+                    raise AFMParseError("Unknown line in %s section: %s " % tpl)
 
     def check(self):
         pass
@@ -355,7 +387,7 @@ class section(keyword, dict):
         if section_object.multiple == 0:
             if self.has_key(keyword):
                 tpl = ( keyword, self.__class__.__name__, )
-                raise ParseError("Multiple %s sections in %s" % tpl)
+                raise AFMParseError("Multiple %s sections in %s" % tpl)
             self.set(keyword, section_object)
         else:
             try:
@@ -376,12 +408,12 @@ class section(keyword, dict):
                 l[idx] = section_object
                 #subsection_class(line_iterator, info, self)
             except ValueError:
-                raise ParseError("Can't parse %s into int" %repr(info))
+                raise AFMParseError("Can't parse %s into int" %repr(info))
 
     def add_keyword(self, keyword, info):
         if self.has_key(keyword):
             tpl = ( self.__class__.__name__, keyword, )
-            raise ParseError("Section %s already has keyword %s" % tpl)
+            raise AFMParseError("Section %s already has keyword %s" % tpl)
         else:
             cls = self.keywords.cls(keyword)
             obj = cls(info)
@@ -409,6 +441,8 @@ class section(keyword, dict):
         for a in self._all:
             yield a
 
+    def has_key(self, key):
+        return (key in self)
 
 class data_section(section):
     """
@@ -418,14 +452,14 @@ class data_section(section):
     datastructures. Of course, since this class implements the dictionary
     interface its objects may be used as a container themselves.
     """
-    info_cls = int
+    info_cls = "int"
 
     def parse(self, line_iterator, parent):
         while True:
             line = line_iterator.readline()
 
             if line == "":
-                raise ParseError("Unexpected end of file")
+                raise AFMParseError("Unexpected end of file")
             elif strip(line).startswith("End%s" % self.__class__.__name__):
                 return # end of section
             elif strip(line) == "":
@@ -473,7 +507,7 @@ class tuple_of_number(keyword):
             info.append(float(part))
 
         if len(info) != self.tuple_size:
-            raise ParseError("%s needs %i number arguments" % \
+            raise AFMParseError("%s needs %i number arguments" % \
                              ( self.__class__.__name__, self.tuple_size, ))
 
         self.info = tuple(info)
@@ -485,7 +519,7 @@ class boolean(keyword):
         elif "false" in lower(info):
             self.info = False
         else:
-            raise ParseError("%s needs boolean argument" % \
+            raise AFMParseError("%s needs boolean argument" % \
                              ( self.__class__.__name__, ))
 
 class array(keyword):
@@ -548,7 +582,7 @@ class CharMetrics(data_section):
 
             key = elements[0]
             if len(elements) < 2:
-                raise ParseError("CharMetrics key without data")
+                raise AFMParseError("CharMetrics key without data")
             else:
                 elements = elements[1:]
                 data = join(elements)
@@ -606,16 +640,16 @@ class CharMetrics(data_section):
                 if len(elements) != 2:
                     msg = ("CharMetrics key L must be L successor "
                            "ligature: %s") % ( repr(line))
-                    raise ParseError(msg)
+                    raise AFMParseError(msg)
                 else:
                     info["L"] = tuple(elements)
 
             else:
-                raise ParseError("Unknown CharMetric line: %s" % repr(line))
+                raise AFMParseError("Unknown CharMetric line: %s" % repr(line))
 
-        if not info.has_key("C"):
-            raise ParseError("Illegal CharMetrics line: Either C or CH key" +\
-                             "Must be present! (%s)" % repr(line))
+        if not "C" in info:
+            raise AFMParseError( "Illegal CharMetrics line: Either C or CH key "
+                                 "Must be present! (%s)" % repr(line) )
         else:
             self.set(info["C"], info)
 
@@ -634,7 +668,7 @@ class TrackKern(data_section):
         elements = filter(lambda a: a != "", elements)
 
         if len(elements) != 6:
-            raise ParseError("Illegal TrackKern dataset: %s" % repr(line))
+            raise AFMParseError("Illegal TrackKern dataset: %s" % repr(line))
 
         degree = int(elements[0])
         rest = elements[1:]
@@ -665,7 +699,7 @@ class KernPairs(data_section):
 
             key = elements[0]
             if len(elements) < 2:
-                raise ParseError("KernPairs key without data: %s" % repr(line))
+                raise AFMParseError("KernPairs key without data: %s" % repr(line))
             else:
                 elements = elements[1:]
                 data = join(elements)
@@ -684,20 +718,20 @@ class KernPairs(data_section):
                     key = ( elements[0], elements[1], )
                     value = ( "KPY", 0, float(elements[2]), )
                 else:
-                    raise ParseError("Unknown data key in KernPairs line %s" %\
+                    raise AFMParseError("Unknown data key in KernPairs line %s" %\
                                                                     repr(line))
 
                 self.set(key, value)
             except IndexError:
                 msg = "Illegel number of data elements in KernPairs line %s" %\
                                                                      repr(line)
-                raise ParseError(msg)
+                raise AFMParseError(msg)
 
 class KernPairs0(KernPairs): pass
 class KernPairs1(KernPairs): pass
 
 class KernData(section):
-    info_cls = int
+    info_cls = "int"
     default = 0
 
     subsections = _sections(TrackKern, KernPairs, KernPairs0, KernPairs1)
@@ -732,7 +766,7 @@ class Composites(data_section):
                 key = elements[0]
                 if len(elements) < 2:
                     msg = "Composit definition key without data: %s"%repr(line)
-                    raise ParseError(msg)
+                    raise AFMParseError(msg)
                 else:
                     elements = elements[1:]
                     data = join(elements)
@@ -748,15 +782,15 @@ class Composites(data_section):
 
                     char_parts.append( ( name, delta_x, deltay, ) )
                 else:
-                    raise ParseError("Unknown element in composit: %s" % \
+                    raise AFMParseError("Unknown element in composit: %s" % \
                                                                    repr(line))
             except IndexError:
                 msg = "Illegal number of elements in composit char: %s" % \
                                                                    repr(line)
-                raise ParseError(msg)
+                raise AFMParseError(msg)
 
         if name is None:
-            raise ParseError("Character name missing from composit char: %s"%\
+            raise AFMParseError("Character name missing from composit char: %s"%\
                                                                    repr(line))
 
         if char_parts_num != len(char_parts):
@@ -771,10 +805,10 @@ class Direction(section):
     implicit_start_stop = True
 
     subsections = _sections( CharMetrics, Composites )
-    keywords = _keywords( UnderlinePosition, UnderlineThickness, ItalicAngle,
-                          CharWidth, IsFixedPitch )
+    keywords = _keywords( UnderlinePosition, UnderlineThickness,
+                          ItalicAngle, CharWidth, IsFixedPitch )
 
-    info_cls = float
+    info_cls = "float"
 
 class FontMetrics(section):
     subsections = _sections( Direction, KernData )
@@ -806,7 +840,7 @@ def parse_afm(fp):
     first_line = lines.readline()
     parts = splitfields(first_line)
     if parts[0] != "StartFontMetrics" or len(parts) != 2:
-        raise ParseError("Not a valid AFM file!")
+        raise AFMParseError("Not a valid AFM file!")
 
     version = float(parts[1])
     if version > 4.1:
@@ -814,14 +848,16 @@ def parse_afm(fp):
 
     try:
         return FontMetrics(lines, None, parts[1])
-    except ParseError as e:
+    except AFMParseError as e:
         e.args = ( e.args[0] + (" (line: %i)" % lines.line_number), )
         raise
 
 __all__= [ "parse_afm", ]
 
 if __name__ == "__main__":
-    import sys
+    debug = _stderr_debug
 
     fp = open(sys.argv[1])
     metrics = parse_afm(fp)
+
+    print(metrics)
