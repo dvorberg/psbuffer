@@ -574,6 +574,8 @@ class PageBase(Section, has_dimensions):
         # Make sure the page has a bounding_box.
         self.bounding_box = (0, 0, self.w, self.h,)
 
+        self._font_wrappers = {}
+
     def begin_comment(self):
         return LazyComment("Page", self.begin_comment_value)
 
@@ -587,6 +589,13 @@ class PageBase(Section, has_dimensions):
 
     def end_comment(self):
         return None
+
+    def register_font(self, font):
+        self.document.add_font(font)
+        if not font.ps_name in self._font_wrappers:
+            self._font_wrappers[font.ps_name] = font.make_wrapper_for(self)
+
+        return self._font_wrappers[font.ps_name]
 
 class Page(PageBase):
     """
@@ -667,6 +676,8 @@ class Document(Section):
         self.pages = self.append(PagesSection())
         self.trailer = self.append(Trailer())
 
+        self._fonts = set()
+
     def begin_comment(self):
         return b"%!PS-Adobe-3.0\n"
 
@@ -680,6 +691,13 @@ class Document(Section):
     def add_resource(self, resource):
         if resource not in self.prolog.resources():
             self.prolog.append(resource)
+
+    def add_font(self, font):
+        from . import procsets
+        self.add_resource(procsets.font_utils)
+        if not font.ps_name in self._fonts:
+            self._fonts.add(font.ps_name)
+            self.add_resource(font.resource_section)
 
     def append(self, thing):
         if isinstance(thing, PageBase):
