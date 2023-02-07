@@ -408,18 +408,19 @@ class FontMetrics(dict):
         will be taken into account, if available. The char_spacing
         parameter is in regular PostScript units, too.
         """
+        s = [ ord(c) for c in s ]
+
         if len(s) == 1:
-            return self.charwidth(ord(s[0]), font_size)
+            return self.charwidth(s[0], font_size)
         else:
             space_metric = self[32]
-            width = sum([self.get(ord(char), space_metric).width * font_size
+            width = sum([self.get(char, space_metric).width * font_size
                          for char in s])
 
             if kerning:
-                for a in range(len(s)-1):
-                    char = s[a]
-                    next = s[a+1]
-                    kerning = self.kerning_pairs.get( (char, next,), 0.0 )
+                for char, next in zip(s[:-1], s[1:]):
+                    kerning = self.kerning_pairs.get(
+                        (char, next,), 0.0 )
                     width += kerning * font_size
 
             if char_spacing > 0.0:
