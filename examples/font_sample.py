@@ -30,11 +30,12 @@ provided on the command line (as pfb/afm file pair) and create a
 PostScript document on stdout.
 """
 
-import sys
+import sys, argparse, pathlib, unicodedata
 
 from psbuffer.dsc import EPSDocument, Page
 from psbuffer.boxes import Canvas
 from psbuffer.measure import mm
+from psbuffer.type1 import Type1
 
 """\
 Create a (Encapsulated) Postscript document with one A4 page
@@ -46,9 +47,10 @@ def main():
     parser.add_argument("-o", "--outfile", help="Output file. "
                         "Deafults to stdout.", type=argparse.FileType("bw"),
                         default=sys.stdout.buffer)
-    parser.add_argument("-s", "--font-size", help="Font size in pt", type=float)
+    parser.add_argument("-s", "--font-size", help="Font size in pt",
+                        type=float, default=12)
     parser.add_argument("outline", help="PFA or PFB file", type=pathlib.Path)
-    parser.add_argument("matrics", help="AFM file", type=pathlib.Path)
+    parser.add_argument("metrics", help="AFM file", type=pathlib.Path)
 
     args = parser.parse_args()
 
@@ -56,20 +58,21 @@ def main():
     page_margin = mm(16)
 
     font_size = args.font_size
-    chars = u"""ABCDEFGHIJKLMNOPQRSTUVWXYZ
-                abcdefghijklmnopqrstuvwxyz
-                äöüÄÖÜß 0123456789
-                !\"§$%&/()=?€@ „“ “” »«"""
+    chars = """ABCDEFGHIJKLMNOPQRSTUVWXYZ
+               abcdefghijklmnopqrstuvwxyz
+               äöüÄÖÜß 0123456789
+               !\"§$%&/()=?€@ „“ “” »«
+               «∑€®†Ωπ@∆ºª©ƒ∂‚å¥≈√∫∞"""
 
     # Load the font
-    fontdata = Type1(args.outline, args.metrics)
+    font = Type1(args.outline.open(), args.metrics.open())
 
     # Create the EPS document
     document = EPSDocument("a4")
     page = document.page
 
     # Register the font with the document
-    font = page.register_font(fontdata)
+    font_wrapper = page.register_font(font)
 
     # Ok, we got to find out a number of things: Dimensions of the cells,
     # dimensions of the table
@@ -116,7 +119,7 @@ def main():
 
     table.print("grestore")
 
-    table.print("/%s findfont" % font_wrapper.ps_name())
+    table.print("/%s findfont" % font_wrapper.ps_name)
     table.print("%f scalefont" % font_size)
     table.print("setfont")
 
@@ -127,7 +130,7 @@ def main():
             psrep = font_wrapper.postscript_representation(char)
 
             table.print(x, y, "moveto")
-            table.print("(%s) show" % psrep)
+            table.print(b"(%s) show" % psrep)
 
     page.bounding_box = table.bounding_box
     document.write_to(args.outfile)
