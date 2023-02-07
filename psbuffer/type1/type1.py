@@ -2,7 +2,7 @@
 
 ##  This file is part of psg, PostScript Generator.
 ##
-##  Copyright 2006-23 by Diedrich Vorberg <diedrich@tux4web.de>
+##  Copyright 2006–23 by Diedrich Vorberg <diedrich@tux4web.de>
 ##
 ##  All Rights Reserved
 ##
@@ -32,6 +32,7 @@ import re
 
 from . import glyph_name_to_codepoint
 from ..base import Font, GlyphMetric, FontMetrics
+from ..measure import Rectangle
 
 from .encoding_tables import encoding_tables
 from .afm_parser import parse_afm
@@ -114,11 +115,9 @@ class AFMMetrics(FontMetrics):
                 except KeyError:
                     continue
 
-            bb = bounding_box.from_tuple(info["B"])
-            self[unicode_char_code] = GlyphMetric(char_code,
-                                                  info["W0X"],
-                                                  glyph_name,
-                                                  bb)
+            bb = Rectangle.from_coordinates(*info["B"])
+            self[unicode_char_code] = GlyphMetric(char_code, info["W0X"],
+                                                  glyph_name, bb)
 
         # Create kerning pair index
         try:
@@ -138,6 +137,7 @@ class AFMMetrics(FontMetrics):
                 kerning = info0
 
                 self.kerning_pairs[ ( a, b, ) ] = kerning
+
         except KeyError:
             pass
 
@@ -182,7 +182,7 @@ class AFMMetrics(FontMetrics):
         """
         numbers = self.fontbbox
         numbers = map(lambda n: n / 1000.0, numbers)
-        return bounding_box.from_tuple(numbers)
+        return Rectangle.from_coordinates(*numbers)
 
 if __name__ == "__main__":
     import sys
@@ -196,3 +196,10 @@ if __name__ == "__main__":
     print("Weight      ", metrics.weight)
     print("Italic?     ", metrics.italic)
     print("Fixed width?", metrics.fixed_width)
+    print()
+    s = "Diedrich Vorberg"
+    for c in s:
+        print(c, metrics.charwidth(ord(c), 10))
+    print()
+    print(metrics.stringwidth(s, 10, kerning=False), "kerning=False")
+    print(metrics.stringwidth(s, 10, kerning=True), "kerning=True")
