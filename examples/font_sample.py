@@ -35,7 +35,7 @@ import sys, argparse, pathlib, unicodedata
 from psbuffer.dsc import EPSDocument, Page
 from psbuffer.boxes import Canvas
 from psbuffer.measure import mm
-from psbuffer.type1 import Type1
+from psbuffer.fonts import Type1
 
 """\
 Create a (Encapsulated) Postscript document with one A4 page
