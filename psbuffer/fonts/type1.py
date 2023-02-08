@@ -30,12 +30,13 @@ This module contains code to handle PostScript Type1 fonts.
 
 import re
 
-from ..fontbase import ( Font, GlyphMetric, FontMetrics, FontResourceSection,
-                         encoding_tables, glyph_name_to_codepoint, )
 from ..measure import Rectangle
-from .afm_parser import parse_afm
 from ..utils import pfb2pfa_Buffer
 from ..base import FileAsBuffer
+
+from .fontbase import Font, GlyphMetric, FontMetrics, FontResourceSection
+from .encoding_tables import encoding_tables, glyph_name_to_codepoint
+from .afm_parser import parse_afm
 
 class global_info(property):
     """
