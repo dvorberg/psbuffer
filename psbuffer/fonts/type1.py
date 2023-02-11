@@ -164,7 +164,7 @@ class AFMMetrics(FontMetrics):
 
                 kerning = info0
 
-                self.kerning_pairs[ ( a, b, ) ] = kerning
+                self.kerning_pairs[ ( a, b, ) ] = kerning / 1000.0
 
         except KeyError:
             pass
