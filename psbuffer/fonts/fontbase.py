@@ -76,7 +76,7 @@ class GlyphMetric:
     def __init__(self, char_code, width, ps_name, bounding_box):
         """
         @param char_code: Character code in font encoding
-        @param width: Character width in 1/1000th unit
+        @param width: Character width in regular PostScript unit
         @param ps_name: PostScript character name. May be None.
         @param bounding_box: Charachter bounding box in 1/1000th unit
         """
@@ -106,7 +106,7 @@ class FontMetrics(dict):
         self.kerning_pairs.setdefault(0.0)
 
     def charwidth(self, codepoint, font_size):
-        return self.get(codepoint, self[32]).width * font_size / 1000.0
+        return self.get(codepoint, self[32]).width * font_size
 
 class SetupLinesForFont(object):
     def __init__(self, font_wrapper):

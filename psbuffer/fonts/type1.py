@@ -144,8 +144,8 @@ class AFMMetrics(FontMetrics):
                     continue
 
             bb = Rectangle.from_coordinates(*info["B"])
-            self[unicode_char_code] = GlyphMetric(char_code, info["W0X"],
-                                                  glyph_name, bb)
+            self[unicode_char_code] = GlyphMetric(
+                char_code, info["W0X"] / 1000.0, glyph_name, bb)
 
         # Create kerning pair index
         try:
