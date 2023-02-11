@@ -24,7 +24,7 @@
 ##
 ##  I have added a copy of the GPL in the file gpl.txt.
 
-import functools, unicodedata, warnings
+import sys, functools, unicodedata, warnings
 from ..dsc import DSCBuffer, PageBase, ResourceSection
 from .encoding_tables import codepoint_to_glyph_name
 
@@ -65,8 +65,8 @@ class Font(object):
     def has_char(self, codepoint):
         return codepoint in self.metrics
 
-    def make_wrapper_for(self, page:PageBase):
-        return FontWrapper(self, page)
+    def make_encoding_for_page(self, page:PageBase):
+        return PageSpecificFontEncoding(self, page)
 
     @property
     def resource_section(self):
@@ -105,43 +105,8 @@ class FontMetrics(dict):
         self.kerning_pairs = {}
         self.kerning_pairs.setdefault(0.0)
 
-    @property
-    def codepoints(self):
-        """
-        Return a list of available character codes.
-        """
-        return list(self.keys())
-
     def charwidth(self, codepoint, font_size):
         return self.get(codepoint, self[32]).width * font_size / 1000.0
-
-    def stringwidth(self, s, font_size, kerning=True, char_spacing=0.0):
-        """
-        Return the width of s when rendered in the current font in
-        regular PostScript units. The boolean parameter kerning
-        indicates whether the font’s pair-wise kerning information
-        will be taken into account, if available. The char_spacing
-        parameter is in regular PostScript units, too.
-        """
-        s = [ ord(c) for c in s ]
-
-        if len(s) == 1:
-            return self.charwidth(s[0], font_size)
-        else:
-            space_metric = self[32]
-            width = sum([self.get(char, space_metric).width * font_size
-                         for char in s])
-
-            if kerning:
-                for char, next in zip(s[:-1], s[1:]):
-                    kerning = self.kerning_pairs.get(
-                        (char, next,), 0.0 )
-                    width += kerning * font_size
-
-            if char_spacing > 0.0:
-                width += (len(s) - 1) * char_spacing * 1000.0
-
-            return width / 1000.0
 
 class SetupLinesForFont(object):
     def __init__(self, font_wrapper):
@@ -202,14 +167,13 @@ class SetupLinesForFont(object):
         return setup.encode("ascii")
 
 
-class FontWrapper(object):
+class PageSpecificFontEncoding(object):
     """
-    The FontWrapper binds it all together. It provides the relevant
-    methods of Font, FontMetric and has functionality to create PostScript
-    code for the font instance bound to a specific page.
+    The PageSpecificFontEncoding maintains a per-page mapping of
+    8bit codes for unicode codepoints.
 
-    self.mappging: Maps unciode code points to 8-bit PostScript codes
-       used to encode corresponding glyphs.
+    self.mappging: Maps unciode code points (int) to 8-bit PostScript
+       codes used to encode corresponding glyphs.
     """
     def __init__(self, font:Font, page:PageBase):
         self.font = font
@@ -226,41 +190,33 @@ class FontWrapper(object):
     def has_char(self, codepoint):
         return codepoint in self.metrics
 
-    @property
-    def codepoints(self):
-        return self.metrics.codepoints
-
-    def charwidth(self, codepoint, font_size):
-        return self.metrics.charwidth(codepoint, font_size)
-
-    def stringwidth(self, s, font_size, kerning=True, char_spacing=0.0):
-        return self.metrics.stringwidth(s, font_size, kerning, char_spacing)
-
     @functools.cached_property
     def ordinal(self):
         return self.page.ordinal
 
-    def register_chars(self, chars:str, ignore_missing=True):
-        for char in chars:
-            char = ord(char)
+    def pscodes_for(self, codepoints:[int], ignore_missing=True):
+        return [ self.pscode_for(codepoint, ignore_missing)
+                 for codepoint in codepoints ]
 
-            if not self.font.has_char(char):
+    def pscode_for(self, codepoint:int, ignore_missing=True):
+        if codepoint not in self.mapping:
+            if not self.font.has_char(codepoint):
                 if ignore_missing:
-                    if char in codepoint_to_glyph_name:
+                    if codepoint in codepoint_to_glyph_name:
                         tpl = ( self.font.ps_name,
-                                codepoint_to_glyph_name[char], )
+                                codepoint_to_glyph_name[codepoint], )
                     else:
-                        tpl = ( self.font.ps_name, "#%i" % char, )
+                        tpl = ( self.font.ps_name, "#%i" % codepoint, )
 
                     msg = "%s does not contain needed glyph %s" % tpl
                     warnings.warn(msg)
-                    char = 32 # space
+                    codepoint = 32 # space
                 else:
-                    tpl = ( char, repr(unichr(char)), )
-                    msg = "No glyph for unicode char %i (%s)" % tpl
+                    tpl = ( codepoint, repr(unichr(codepoint)), )
+                    msg = "No glyph for unicode codepoint %i (%s)" % tpl
                     raise KeyError(msg)
 
-            if not char in self.mapping:
+            if not codepoint in self.mapping:
                 self.next += 1
 
                 if self.next > 254:
@@ -272,7 +228,7 @@ class FontWrapper(object):
 
                     if next == -1:
                         # If these are exhausted as well, replace
-                        # the char by the space character.
+                        # the codepoint by the space character.
                         warning.warn(f"No 8-bit codes left in {self.ps_name} "
                                      f"(page no. {self.page.ordinal})")
                         next = 32
@@ -281,21 +237,86 @@ class FontWrapper(object):
                 else:
                     next = self.next
 
-                self.mapping[char] = next
+                self.mapping[codepoint] = next
+        return self.mapping[codepoint]
 
-    def postscript_representation(self, us):
+    @property
+    def ps_name(self):
         """
-        Return a regular 8bit string in this particular encoding
-        representing unicode string 'us'. This function will register
-        all characters in us with this page.
+        Return the name of the re-encoded font for this page.
         """
-        self.register_chars(us)
+        return "%s*%i" % ( self.font.ps_name, self.ordinal, )
+
+    def make_wrapper(self, size:float, char_spacing:float, use_kerning:bool):
+        return FontWrapper(self, size, char_spacing, use_kerning)
+
+class FontWrapper(object):
+    def __init__(self, page_specific_encoding,
+                 size:float, char_spacing:float, use_kerning:bool):
+        self.encoding = page_specific_encoding
+        self.size = size
+        self.char_spacing = char_spacing
+        self.use_kerning = use_kerning
+
+        # Maps unicode code point to width:float in regular PostScrpipt units.
+        self.widths = {}
+
+    @functools.cached_property
+    def font(self):
+        return self.encoding.font
+
+    @functools.cached_property
+    def metrics(self):
+        return self.font.metrics
+
+    def charwidth(self, codepoint:int):
+        if not codepoint in self.widths:
+            self.encoding.pscode_for(codepoint)
+            self.widths[codepoint] = self.metrics.charwidth(
+                codepoint, self.size)
+        return self.widths[codepoint]
+
+
+    def stringwidth(self, s):
+        """
+        Return the width of s when rendered in the current font in
+        regular PostScript units. The boolean parameter kerning
+        indicates whether the font’s pair-wise kerning information
+        will be taken into account, if available. The char_spacing
+        parameter is in regular PostScript units, too.
+        """
+        s = [ ord(c) for c in s ]
+
+        if len(s) == 1:
+            return self.charwidth(s[0])
+        else:
+            space_metric = self.charwidth(32)
+            width = sum([self.charwidth(s) for char in s])
+
+            if self.use_kerning:
+                kerning_pairs = self.metrics.kerning_pairs
+                for char, next in zip(s[:-1], s[1:]):
+                    kerning = kerning_pairs.get((char, next,), 0.0 )
+                    width += kerning * self.size
+
+            if self.char_spacing > 0.0:
+                width += (len(s) - 1) * self.char_spacing
+
+            return width
+
+    def setfont(self):
+        return b"/%s findfont %i scalefont setfont" % (
+            self.encoding.ps_name.encode("ascii"), self.size, )
+
+    def postscript_representation(self, codepoints):
+        """
+        Return a bytearray representing `codepoints` in this
+        particular encoding. This function will register all
+        characters in us with this page.
+        """
         ret = bytearray()
 
-        for char in us:
-            codepoint = ord(char)
-            byte = self.mapping.get(codepoint, None)
-
+        for byte in self.encoding.pscodes_for(codepoints):
             if byte is None:
                 ps = [32,] # Space
             else:
@@ -308,9 +329,29 @@ class FontWrapper(object):
 
         return ret
 
-    @property
-    def ps_name(self):
-        """
-        Return the name of the re-encoded font for this page.
-        """
-        return "%s*%i" % ( self.font.ps_name, self.ordinal, )
+    def show(self, us):
+        return b"(%s) show" % self.postscript_representation(
+            [ord(u) for u in us])
+
+    def xshow(self, us):
+        codepoints = [ord(u) for u in us]
+
+        b = self.postscript_representation(codepoints)
+
+        ret = bytearray()
+        ret.extend(b"(")
+        ret.extend(self.postscript_representation(codepoints))
+        ret.extend(b") [ ")
+
+        if self.use_kerning:
+            kerning_pairs = self.metrics.kerning_pairs
+        else:
+            kerning_pairs = {}
+
+        for codepoint, next in zip(codepoints, codepoints[1:] + [0,]):
+            kerning = kerning_pairs.get( (codepoint, next,), 0.0 )
+            width = self.charwidth(codepoint) + kerning + self.char_spacing
+            ret.extend(b"%.3f " % width)
+
+        ret.extend(b"] xshow")
+        return ret
