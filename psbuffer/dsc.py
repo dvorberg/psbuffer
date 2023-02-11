@@ -77,7 +77,7 @@ class Comment(object):
     def write_to(self, fp):
         if self._value is None:
             fp.write(b"%%" + encode(self.keyword) + b"\n")
-        elif self.keyword == b"+":
+        elif self.keyword == b"+" or self.keyword == "+":
             fp.write(b"%%+ " + self._payload + b"\n")
         else:
             fp.write(b"%%" + encode(self.keyword) + b": " + \
@@ -574,7 +574,7 @@ class PageBase(Section, has_dimensions):
         # Make sure the page has a bounding_box.
         self.bounding_box = (0, 0, self.w, self.h,)
 
-        self._font_wrappers = {}
+        self._font_encodings = {}
 
     def begin_comment(self):
         return LazyComment("Page", self.begin_comment_value)
@@ -590,12 +590,14 @@ class PageBase(Section, has_dimensions):
     def end_comment(self):
         return None
 
-    def register_font(self, font):
+    def make_font_wrapper(self, font, size, char_spacing=0.0, use_kerning=True):
         self.document.add_font(font)
-        if not font.ps_name in self._font_wrappers:
-            self._font_wrappers[font.ps_name] = font.make_wrapper_for(self)
+        if not font.ps_name in self._font_encodings:
+            self._font_encodings[font.ps_name] = font.make_encoding_for_page(
+                self)
 
-        return self._font_wrappers[font.ps_name]
+        return self._font_encodings[font.ps_name].make_wrapper(
+            size, char_spacing, use_kerning)
 
 class Page(PageBase):
     """
