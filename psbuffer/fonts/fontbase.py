@@ -25,6 +25,8 @@
 ##  I have added a copy of the GPL in the file gpl.txt.
 
 import sys, functools, unicodedata, warnings
+from typing import Sequence
+
 from ..dsc import DSCBuffer, PageBase, ResourceSection
 from .encoding_tables import codepoint_to_glyph_name
 
@@ -194,7 +196,7 @@ class PageSpecificFontEncoding(object):
     def ordinal(self):
         return self.page.ordinal
 
-    def pscodes_for(self, codepoints:[int], ignore_missing=True):
+    def pscodes_for(self, codepoints:Sequence[int], ignore_missing=True):
         return [ self.pscode_for(codepoint, ignore_missing)
                  for codepoint in codepoints ]
 
@@ -277,7 +279,7 @@ class FontWrapper(object):
         return self.widths[codepoint]
 
 
-    def stringwidth(self, s):
+    def charswidth(self, codepoints:Sequence[int]):
         """
         Return the width of s when rendered in the current font in
         regular PostScript units. The boolean parameter kerning
@@ -285,24 +287,20 @@ class FontWrapper(object):
         will be taken into account, if available. The char_spacing
         parameter is in regular PostScript units, too.
         """
-        s = [ ord(c) for c in s ]
+        space_metric = self.charwidth(32)
+        width = sum([self.charwidth(cp) for cp in codepoints])
 
-        if len(s) == 1:
-            return self.charwidth(s[0])
-        else:
-            space_metric = self.charwidth(32)
-            width = sum([self.charwidth(s) for char in s])
+        if self.use_kerning:
+            kerning_pairs = self.metrics.kerning_pairs
+            kerning = sum([ kerning_pairs.get((char, next,), 0.0 )
+                            for char, next in zip(codepoints[:-1],
+                                                  codepoints[1:]) ])
+            width += kerning * self.size
 
-            if self.use_kerning:
-                kerning_pairs = self.metrics.kerning_pairs
-                for char, next in zip(s[:-1], s[1:]):
-                    kerning = kerning_pairs.get((char, next,), 0.0 )
-                    width += kerning * self.size
+        if self.char_spacing > 0.0:
+            width += (len(s) - 1) * self.char_spacing
 
-            if self.char_spacing > 0.0:
-                width += (len(s) - 1) * self.char_spacing
-
-            return width
+        return width
 
     def setfont(self):
         return b"/%s findfont %i scalefont setfont" % (
