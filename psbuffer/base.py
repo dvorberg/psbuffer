@@ -28,9 +28,6 @@ import os, io
 
 STRING_ENCODING="utf-8"
 
-# For my development process.
-debug = print
-
 def encode(s):
     if type(s) is str:
         return s.encode(STRING_ENCODING)
@@ -48,7 +45,9 @@ class PSBuffer(object):
         self.write(*things)
 
     def _convert(self, thing):
-        if type(thing) is bytes or hasattr(thing, "write_to"):
+        if type(thing) is bytes or \
+           isinstance(thing, bytearray) \
+           or hasattr(thing, "write_to"):
             return thing
         elif hasattr(thing, "__bytes__"):
             return bytes(thing)
