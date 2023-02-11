@@ -72,13 +72,13 @@ def main():
     page = document.page
 
     # Register the font with the document
-    font_wrapper = page.register_font(font)
+    font_wrapper = page.make_font_wrapper(font, font_size)
 
     # Ok, we got to find out a number of things: Dimensions of the cells,
     # dimensions of the table
     m = 0
     for char in chars:
-        m = max(m, font.metrics.stringwidth(char, font_size))
+        m = max(m, font.metrics.charwidth(ord(char), font_size))
 
     td_width = m + 2*cellpadding
     td_height = font_size + 2*cellpadding
@@ -119,15 +119,17 @@ def main():
 
     table.print("grestore")
 
-    table.print("/%s findfont" % font_wrapper.ps_name)
+    # This is what font_wrapper.setfont() does:
+    table.print("/%s findfont" % font_wrapper.encoding.ps_name)
     table.print("%f scalefont" % font_size)
     table.print("setfont")
 
+    # Fill the boxes.
     for lc, line in enumerate(lines):
         for cc, char in enumerate(line):
             x = cc * td_width + cellpadding
             y = lc * td_height + cellpadding
-            psrep = font_wrapper.postscript_representation(char)
+            psrep = font_wrapper.postscript_representation( [ord(char),] )
 
             table.print(x, y, "moveto")
             table.print(b"(%s) show" % psrep)
