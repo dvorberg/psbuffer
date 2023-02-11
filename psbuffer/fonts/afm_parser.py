@@ -87,7 +87,7 @@ The structure of an AFM file looks like this::
 import sys, re
 from warnings import warn
 
-from ..utils import LineIterator
+from ..utils import LineIterator, splitfields
 
 
 def _null_debug(*args, **kw):
@@ -118,11 +118,6 @@ def lower(s):
 
 def upper(s):
     return s.upper()
-
-whitespace_re = re.compile(r"\s+")
-def splitfields(s):
-    return whitespace_re.split(s.strip())
-
 
 # Parse error exception
 
