@@ -31,16 +31,19 @@ from .measure import Rectangle
 from .base import encode, Subfile
 
 # Lost In Single Paranthesis
-def car(l): return l[0]
-head = car
-def cdr(l): return l[1:]
-tail = cdr
+#def car(l): return l[0]
+#head = car
+#def cdr(l): return l[1:]
+#tail = cdr
 
-def toppop(l):
-    ret = l[0]
-    del l[0]
-    return ret
+#def toppop(l):
+#    ret = l[0]
+#    del l[0]
+#    return ret
 
+whitespace_re = re.compile(r"\s+")
+def splitfields(s):
+    return whitespace_re.split(s.strip())
 
 class LineIterator(object):
     """
