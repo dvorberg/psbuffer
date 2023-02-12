@@ -251,7 +251,7 @@ class DSCBuffer(PSBuffer):
         Return None if not in the tree (yet) or not the right
         section to ask for a page.
         """
-        return self.walk_up_to(Page)
+        return self.walk_up_to(PageBase)
 
 
 
@@ -590,14 +590,13 @@ class PageBase(Section, has_dimensions):
     def end_comment(self):
         return None
 
-    def make_font_wrapper(self, font, size, char_spacing=0.0, use_kerning=True):
-        self.document.add_font(font)
+    def get_encoding_for(self, font):
         if not font.ps_name in self._font_encodings:
+            self.document.add_font(font)
             self._font_encodings[font.ps_name] = font.make_encoding_for_page(
                 self)
 
-        return self._font_encodings[font.ps_name].make_wrapper(
-            size, char_spacing, use_kerning)
+        return self._font_encodings[font.ps_name]
 
 class Page(PageBase):
     """
