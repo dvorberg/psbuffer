@@ -74,6 +74,11 @@ class Font(object):
     def resource_section(self):
         raise NotImplemented()
 
+    def make_instance(self, size:float, char_spacing:float=0.0,
+                      use_kerning:bool=True):
+        return FontInstance(self, size, char_spacing, use_kerning)
+
+
 class GlyphMetric:
     def __init__(self, char_code, width, ps_name, bounding_box):
         """
@@ -249,13 +254,16 @@ class PageSpecificFontEncoding(object):
         """
         return "%s*%i" % ( self.font.ps_name, self.ordinal, )
 
-    def make_wrapper(self, size:float, char_spacing:float, use_kerning:bool):
-        return FontWrapper(self, size, char_spacing, use_kerning)
-
-class FontWrapper(object):
-    def __init__(self, page_specific_encoding,
-                 size:float, char_spacing:float, use_kerning:bool):
-        self.encoding = page_specific_encoding
+class FontInstance(object):
+    """
+    A FontSpec knows about glyph sizes for a specific font size
+    and is able to set the font in PostScript (using findfont,
+    scalefont, and setfont) and represent strings in PostScript commands
+    (show and xshow)
+    """
+    def __init__(self, font:Font, size:float,
+                 char_spacing:float, use_kerning:bool):
+        self.font = font
         self.size = size
         self.char_spacing = char_spacing
         self.use_kerning = use_kerning
@@ -264,16 +272,11 @@ class FontWrapper(object):
         self.widths = {}
 
     @functools.cached_property
-    def font(self):
-        return self.encoding.font
-
-    @functools.cached_property
     def metrics(self):
         return self.font.metrics
 
     def charwidth(self, codepoint:int):
         if not codepoint in self.widths:
-            self.encoding.pscode_for(codepoint)
             self.widths[codepoint] = self.metrics.charwidth(
                 codepoint, self.size)
         return self.widths[codepoint]
@@ -302,11 +305,10 @@ class FontWrapper(object):
 
         return width
 
-    def setfont(self):
-        return b"/%s findfont %i scalefont setfont" % (
-            self.encoding.ps_name.encode("ascii"), self.size, )
+    def encoding(self, container):
+        return container.page.get_encoding_for(self.font)
 
-    def postscript_representation(self, codepoints):
+    def postscript_representation(self, container, codepoints):
         """
         Return a bytearray representing `codepoints` in this
         particular encoding. This function will register all
@@ -314,7 +316,7 @@ class FontWrapper(object):
         """
         ret = bytearray()
 
-        for byte in self.encoding.pscodes_for(codepoints):
+        for byte in self.encoding(container).pscodes_for(codepoints):
             if byte is None:
                 ps = [32,] # Space
             else:
@@ -327,29 +329,32 @@ class FontWrapper(object):
 
         return ret
 
-    def show(self, us):
-        return b"(%s) show" % self.postscript_representation(
-            [ord(u) for u in us])
+    def setfont(self, container):
+        print = container.print
 
-    def xshow(self, us):
-        codepoints = [ord(u) for u in us]
+        print("/" + self.encoding(container).ps_name, "findfont")
+        print(self.size, "scalefont")
+        print("setfont")
 
-        b = self.postscript_representation(codepoints)
+    def show(self, container, codepoints):
+        container.print(b"(%s) show" % self.postscript_representation(
+            container, codepoints))
 
-        ret = bytearray()
-        ret.extend(b"(")
-        ret.extend(self.postscript_representation(codepoints))
-        ret.extend(b") [ ")
+    def xshow(self, container, codepoints):
+        print = container.print
+        print(b"(" + self.postscript_representation(container,
+                                                    codepoints) + b") ",
+              end=" ")
 
         if self.use_kerning:
             kerning_pairs = self.metrics.kerning_pairs
         else:
             kerning_pairs = {}
 
+        print(b"[", end=" ")
         for codepoint, next in zip(codepoints, codepoints[1:] + [0,]):
             kerning = kerning_pairs.get( (codepoint, next,), 0.0 )
-            width = self.charwidth(codepoint) + kerning + self.char_spacing
-            ret.extend(b"%.3f " % width)
+            print(self.charwidth(codepoint) + kerning + self.char_spacing,
+                  end=" ")
 
-        ret.extend(b"] xshow")
-        return ret
+        print(b"] xshow")
