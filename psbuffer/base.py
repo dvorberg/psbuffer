@@ -53,6 +53,8 @@ class PSBuffer(object):
             return bytes(thing)
         elif thing is None:
             return b""
+        elif type(thing) is float:
+            return b"%.4f" % thing
         else:
             return bytes(str(thing).encode(STRING_ENCODING))
 
