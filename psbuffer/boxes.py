@@ -24,6 +24,7 @@
 ##
 ##  I have added a copy of the GPL in the file gpl.txt.
 from uuid import uuid4 as uuid
+from typing import Sequence
 
 from .base import PSBuffer, FileWrapper
 from .dsc import DSCBuffer, ResourceSection, Comment
@@ -267,3 +268,38 @@ class RasterImage(EPSBox):
 
         super().__init__(self.raster_image_buffer(pil_image),
                          bb, document_level, border, clip, comment)
+
+class TextBox(Box):
+    def __init__(self, x, y, w, h, border=False, clip=False, comments=""):
+        super().__init__(x, y, w, h, border, clip, comments)
+        self._font_instance = None
+
+    @property
+    def font(self):
+        return self._font_instance
+
+    @font.setter
+    def font(self, font_instance):
+        if self._font_instance != font_instance:
+            font_instance.setfont(self)
+        self._font_instance = font_instance
+
+    def typeset(self, line_iterator):
+        y = self.h
+        line_iterator.maxwidth = self.w
+
+        for line in line_iterator:
+            y -= line.height
+            if y < 0.0:
+                line_iterator.push_line(line)
+                break
+            else:
+                x = 0.0
+                for word in line[:-1]:
+                    self.font = word.font
+                    self.print(x, y, "moveto")
+                    word.xshow(self)
+                    x += word.width + word.space_width
+
+                self.print(x, y, "moveto")
+                line[-1].withHyphen().xshow(self)
