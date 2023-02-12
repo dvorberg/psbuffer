@@ -28,7 +28,7 @@ import sys, functools, unicodedata, warnings
 from typing import Sequence
 
 from ..dsc import DSCBuffer, PageBase, ResourceSection
-from .encoding_tables import codepoint_to_glyph_name
+from .encoding_tables import codepoint_to_glyph_name, unicode_space_characters
 
 class FontResourceSection(ResourceSection):
     def __init__(self, font):
@@ -270,6 +270,23 @@ class FontInstance(object):
 
         # Maps unicode code point to width:float in regular PostScrpipt units.
         self.widths = {}
+
+        # We add char widths for the unicode space characters
+        # define in the encoding tables. If the font defines them,
+        # fine. If not, we use the suggested factor with regard to
+        # the font size. They might get rendered as space characters
+        # by postscript_representation, but assuming showx is being
+        # used, characters arround them will be correctly positioned.
+        for spacechar in unicode_space_characters:
+            if self.font.has_char(spacechar.codepoint):
+                # This caches the result in self.widths:
+                self.charwidth(spacechar.codepoint)
+            elif spacechar.use_size_of:
+                self.widths[spacechar.codepoint] = self.charwidth(
+                    spacechar.use_size_of)
+            else:
+                self.widths[spacechar.codepoint] = \
+                    spacechar.suggested_em_size * size
 
     @functools.cached_property
     def metrics(self):
