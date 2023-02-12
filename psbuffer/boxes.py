@@ -124,6 +124,18 @@ class Canvas(Box):
         if x != 0 or y != 0:
             self.head.print(self.x, self.y, "translate")
 
+        self._font_instance = None
+
+    @property
+    def font(self):
+        return self._font_instance
+
+    @font.setter
+    def font(self, font_instance):
+        if self._font_instance != font_instance:
+            font_instance.setfont(self)
+        self._font_instance = font_instance
+
 
 class EPSBox(Box):
     """
@@ -268,38 +280,3 @@ class RasterImage(EPSBox):
 
         super().__init__(self.raster_image_buffer(pil_image),
                          bb, document_level, border, clip, comment)
-
-class TextBox(Canvas):
-    def __init__(self, x, y, w, h, border=False, clip=False, comments=""):
-        super().__init__(x, y, w, h, border, clip, comments)
-        self._font_instance = None
-
-    @property
-    def font(self):
-        return self._font_instance
-
-    @font.setter
-    def font(self, font_instance):
-        if self._font_instance != font_instance:
-            font_instance.setfont(self)
-        self._font_instance = font_instance
-
-    def typeset(self, line_iterator):
-        y = self.h
-        line_iterator.maxwidth = self.w
-
-        for line in line_iterator:
-            y -= line.height
-            if y < 0.0:
-                line_iterator.push_line(line)
-                break
-            else:
-                x = 0.0
-                for word in line[:-1]:
-                    self.font = word.font
-                    self.print(x, y, "moveto")
-                    word.xshow(self)
-                    x += word.width + word.space_width
-
-                self.print(x, y, "moveto")
-                line[-1].withHyphen().xshow(self)
