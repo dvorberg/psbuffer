@@ -269,7 +269,7 @@ class RasterImage(EPSBox):
         super().__init__(self.raster_image_buffer(pil_image),
                          bb, document_level, border, clip, comment)
 
-class TextBox(Box):
+class TextBox(Canvas):
     def __init__(self, x, y, w, h, border=False, clip=False, comments=""):
         super().__init__(x, y, w, h, border, clip, comments)
         self._font_instance = None
