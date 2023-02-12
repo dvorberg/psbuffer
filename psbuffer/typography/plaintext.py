@@ -26,15 +26,15 @@
 
 import functools, copy
 from typing import Sequence
-from ..fonts.fontbase import FontWrapper
+from ..fonts.fontbase import FontInstance
 
 """
-Classes to represent text formatted with a single FontWrapper (font, size,
+Classes to represent text formatted with a single FontSpec (font, size,
 kerning, char_spacing) throughout.
 """
 
 class Syllable(object):
-    def __init__(self, font_wrapper:FontWrapper, codepoints:Sequence[int],
+    def __init__(self, font_wrapper:FontInstance, codepoints:Sequence[int],
                  final=False):
         self.font = font_wrapper
         self.codepoints = codepoints
@@ -57,6 +57,7 @@ class Syllable(object):
         else:
             return Syllable(self. font, self.codepoints + [ 45, ], False)
 
+    @property
     def height(self):
         return self.font.size
 
@@ -67,6 +68,9 @@ class Syllable(object):
         else:
             return 0.0
 
+    def xshow(self, container):
+        return self.font.xshow(container, self.codepoints)
+
     def __str__(self):
         return "".join([chr(cp) for cp in self.codepoints])
 
@@ -75,7 +79,7 @@ class Syllable(object):
 
 
 class Word(Syllable):
-    def __init__(self, font_wrapper:FontWrapper,
+    def __init__(self, font_wrapper:FontInstance,
                  word:str, hyphenate_f=None):
         super().__init__(font_wrapper, [ ord(char) for char in word ])
         self.word = word
@@ -113,52 +117,91 @@ class Word(Syllable):
         return f"“{self.word}@{self.width:.2f}pt”"
 
 class SoftParagraph(object):
-    def __init__(self, words:Sequence[Word]):
+    def __init__(self, words:Sequence[Word], line_height:float=None):
         self.words = words
         self.line_height = line_height
 
-    def lines(self, width:float):
-        """
-        Yield lines (lists of Word or Syllable objects) of which each
-        either
-           - Has a combined width <= `width`
-           - or consists of a single Syllable width width > `width`.
-        """
-        syllables = []
-        def elements():
-            for word in self.words:
-                while syllables:
-                    yield syllables[0]
-                    del syllables[0]
+    def make_line_iterator(self, maxwidth):
+        return LineIterator(self.make_word_iterator(), maxwidth)
 
-                yield word
+    def make_word_iterator(self):
+        return WordIterator(self.words)
 
-        class Line(list):
-            def __init__(self, *args):
-                super().__init__()
+class WordIterator(object):
+    def __init__(self, words:Sequence[Syllable]):
+        self.words = words
+        self.syllables = []
 
-                self.width = 0.0
+    def push_line(self, line):
+        self.syllables = list(line) + self.syllables
 
-                for a in args:
-                    self.append(a)
+    def push_syllables(self, syllables):
+        self.syllables.extend(syllables)
 
-            def append(self, element):
-                self.width += element.width
-                if len(self) > 0:
-                    self.width += self[-1].space_width
-                super().append(element)
+    def __iter__(self):
+        for word in self.words:
+            while self.syllables:
+                yield self.syllables[0]
+                del self.syllables[0]
 
-            def __iter__(self):
-                if len(self) > 0:
-                    for item in self[:-1]:
-                        yield item
+            yield word
 
-                    yield self[-1].withHyphen()
+class Line(list):
+    """
+    A line is a list of Words/Syllables. It has a `width`, which is the sum
+    of the widths of its words plus the sum of the width of white-space in
+    between those words.
+    """
+    def __init__(self, *args):
+        super().__init__()
 
+        self.width = 0.0
+
+        for a in args:
+            self.append(a)
+
+    def append(self, element):
+        self.width += element.width
+        if len(self) > 0:
+            self.width += self[-1].space_width
+        super().append(element)
+
+    def withHyphen(self):
+        ret = Line()
+
+        if len(self) > 0:
+            for a in self[:-1]:
+                ret.append(a)
+            ret.append(self[-1].withHyphen())
+
+        return ret
+
+    @property
+    def height(self) -> float:
+        return max([ e.height for e in self ])
+
+
+class LineIterator(object):
+    def __init__(self, words:WordIterator, initial_maxwidth:float=None):
+        self._maxwidth = initial_maxwidth
+        self.words = words
+
+        self._done = False
+
+    @property
+    def maxwidth(self):
+        return self._maxwidth
+
+    @maxwidth.setter
+    def maxwidth(self, maxwidth:float):
+        self._maxwidth = maxwidth
+
+    def __iter__(self):
         line = Line()
-        for element in elements():
+        for element in self.words:
             # A syllable that doesn’t fit a line by itself.
-            if isinstance(element, Syllable) and element.hyphenedWidth > width:
+            if isinstance(element, Syllable) and \
+               element.hyphenedWidth > self._maxwidth:
                 # If there is a line with something on it, yield it.
                 if line:
                     yield line
@@ -168,13 +211,13 @@ class SoftParagraph(object):
                 # Yield the over-sized syllable on a line by itself.
                 yield Line(element)
 
-            if line.width + element.hyphenedWidth > width:
+            if line.width + element.hyphenedWidth > self._maxwidth:
                 if isinstance(element, Word):
                     # Hyphenate
-                    syllables.extend(element.syllables)
+                    self.words.push_syllables(element.syllables)
                 else:
                     # newline!
-                    yield list(line)
+                    yield line
                     line = Line(element)
             else:
                 line.append(element)
@@ -182,6 +225,20 @@ class SoftParagraph(object):
         if line:
             yield line
 
+        self._done = True
+
+    def push_line(self, line:Line):
+        """
+        Hand back a line to the iterator.
+        """
+        self.words.push_line(line)
+
+    @property
+    def done(self) -> bool:
+        """
+        Returns True, if all lines have been yielded.
+        """
+        return self._done
 
 class HardParagraph(object):
     def __init__(self, soft_paragraphs:Sequence[SoftParagraph],
@@ -190,13 +247,15 @@ class HardParagraph(object):
         self.margin_top = margin_top
         self.margin_bottom = margin_bottom
 
+
+
 if __name__ == "__main__":
     import sys, argparse, pathlib
 
     from hyphen import Hyphenator
 
     from psbuffer.dsc import EPSDocument, Page
-    from psbuffer.boxes import Canvas
+    from psbuffer.boxes import TextBox
     from psbuffer.measure import mm
     from psbuffer.fonts import Type1
 
@@ -205,7 +264,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("-o", "--outfile", help="Output file. "
                         "Deafults to stdout.", type=argparse.FileType("bw"),
-                        default=sys.stdout.buffer)
+                        default=None)
     parser.add_argument("-s", "--font-size", help="Font size in pt",
                         type=float, default=12)
     #parser.add_argument("-t", "--text",
@@ -230,12 +289,11 @@ if __name__ == "__main__":
     # Create the EPS document
     document = EPSDocument("a5")
     page = document.page
-    canvas = page.append(Canvas(page_margin, page_margin,
-                                page.w - 2*page_margin,
-                                page.h - 2*page_margin))
+    textbox = page.append(TextBox(page_margin, page_margin,
+                                  mm(50), page.h - 2*page_margin,
+                                  border=True))
 
-    # Register the font with the document
-    cmusr12 = page.make_font_wrapper(cmusr, args.font_size)
+    cmusr12 = cmusr.make_instance(args.font_size)
 
     genesis = ("In the beginning God created the heaven and the earth. "
                "And the earth was without form, and void; and darkness "
@@ -258,10 +316,19 @@ if __name__ == "__main__":
     words = [ Word(cmusr12, word, hyphenator, )
               for word in splitfields(genesis) ]
     sp = SoftParagraph(words)
+    lines = sp.make_line_iterator(textbox.w)
 
-    for line in sp.lines(mm(50)):
-        line = list(line)
-        for element in line[:-1]:
+    if args.outfile is None:
+        for no, line in enumerate(lines):
+            for element in line[:-1]:
+                print(element, end=" " if element.space_width > 0.0 else "")
 
-            print(element, end=" " if element.space_width > 0.0 else "")
-        print(line[-1])
+            if no == 5:
+                lines.maxwidth = lines.maxwidth / 2.0
+            elif no == 10:
+                lines.maxwidth = lines.maxwidth * 2.0
+
+            print(line[-1].withHyphen())
+    else:
+        textbox.typeset(lines)
+        document.write_to(args.outfile)
