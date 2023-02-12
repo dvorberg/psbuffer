@@ -30,7 +30,61 @@
   tables. Encoding tables are dicts themselves mapping font char code to
   unicode char code.
 """
-import os.path as op, re
+import os.path as op, re, unicodedata, re
+from dataclasses import dataclass
+
+@dataclass
+class UnicodeSpace:
+    """
+    Various unicode space characters
+    """
+    codepoint: int
+    suggested_em_size: float = None
+    use_size_of: int = None
+
+    @property
+    def name(self):
+        return unicodedata.name(chr(self.codepoint))
+
+    @property
+    def no_break(self):
+        return "NO-BREAK" in self.name
+
+    @property
+    def char(self):
+        return chr(self.codepoint)
+
+unicode_space_characters = [
+# Unicode whitespace characters
+# From https://jkorpela.fi/chars/spaces.html
+# Space characters and “zero-width spaces” in Unicode
+#                Code					Name of the character		Sample	Width of the character
+    UnicodeSpace(0x0020, .25),			# SPACE						foo bar	Depends on font, typically 1/4 em, often adjusted
+    UnicodeSpace(0x00A0, None, 0x0020),	# NO-BREAK SPACE			foo bar	As a space, but often not adjusted
+    UnicodeSpace(0x1680, .25),			# OGHAM SPACE MARK			foo bar	Unspecified; usually not really a space but a dash
+    UnicodeSpace(0x180E, 0.0),			# MONGOLIAN VOWEL SEPARATOR	foo᠎bar	0
+    UnicodeSpace(0x2000,  .5), 			# EN QUAD					foo bar	1 en (= 1/2 em)
+    UnicodeSpace(0x2001, 1.0),			# EM QUAD					foo bar	1 em (nominally, the height of the font)
+    UnicodeSpace(0x2002,  .5),			# EN SPACE (nut)			foo bar	1 en (= 1/2 em)
+    UnicodeSpace(0x2003, 1.0),			# EM SPACE (mutton)			foo bar	1 em
+    UnicodeSpace(0x2004, 1.0/3.0),		# THREE-PER-EM SPACE (thick space)	foo bar	1/3 em
+    UnicodeSpace(0x2005, .25),			# FOUR-PER-EM SPACE (mid space)	foo bar	1/4 em
+    UnicodeSpace(0x2006, 1.0/6.0),		# SIX-PER-EM SPACE			foo bar	1/6 em
+    UnicodeSpace(0x2007, .25,ord("0")),	# FIGURE SPACE				foo bar	“Tabular width”, the width of digits
+    UnicodeSpace(0x2008, .2, ord(".")),	# PUNCTUATION SPACE			foo bar	The width of a period “.”
+    UnicodeSpace(0x2009,	.2),		# THIN SPACE				foo bar	1/5 em (or sometimes 1/6 em)
+    UnicodeSpace(0x200A,	.1),		# HAIR SPACE				foo bar	Narrower than THIN SPACE
+    UnicodeSpace(0x200B, 0.0),			# ZERO WIDTH SPACE			foo​bar	0
+    UnicodeSpace(0x202F, .2, 0x2009),	# NARROW NO-BREAK SPACE	foo bar	Narrower than NO-BREAK SPACE (or SPACE), “typically the width of a thin space or a mid space”
+    UnicodeSpace(0x205F, 4.0/18.0),		# MEDIUM MATHEMATICAL SPACE	foo bar	4/18 em
+    UnicodeSpace(0x3000, 1.0),			# IDEOGRAPHIC SPACE	foo　bar	The width of ideographic (CJK) characters.
+    UnicodeSpace(0xFEFF, 0), 			# ZERO WIDTH NO-BREAK SPACE	foo﻿bar	0
+]
+
+breaking_whitespace_chars = "".join([u.char for u in unicode_space_characters
+                                     if not u.no_break])
+breaking_whitespace_re = re.compile("[" + breaking_whitespace_chars + "]+")
+
 
 glyph_name_to_codepoint = {}
 codepoint_to_glyph_name = {}
