@@ -26,7 +26,7 @@
 from uuid import uuid4 as uuid
 from typing import Sequence
 
-from .base import PSBuffer, FileWrapper
+from .base import encode, PSBuffer, FileWrapper
 from .dsc import DSCBuffer, ResourceSection, Comment
 from .measure import Rectangle
 from .utils import eps_file_without_preview, get_eps_bb
@@ -74,30 +74,45 @@ class Box(BoxBuffer, Rectangle):
         BoxBuffer.__init__(self)
         Rectangle.__init__(self, x, y, w, h)
 
-        self._comment = "%s: %s\n" % (self.__class__.__name__, comment)
-        self.push("gsave % begin " + self._comment,
-                  "grestore % end " + self._comment)
+        self.border = border
+        self.clip = clip
+        self.comment = comment
 
-        if border:
-            self.head.print("gsave % border=True of ", self._comment)
-            self.head.write(self._bounding_path())
+    @property
+    def _rich_comment(self):
+        return "%s: %s" % (self.__class__.__name__, self.comment)
+
+    def write_to(self, fp):
+        prolog = DSCBuffer()
+        print = prolog.print
+        comment = self._rich_comment
+
+        print("% begin prolog of", comment)
+        if self.border:
+            print("gsave % border")
+            self._print_bounding_path(print)
 
             # Set color to black, line type to solid and width to 'hairline'
-            self.head.print("0 setgray [] 0 setdash .1 setlinewidth")
+            print("0 setgray [] 0 setdash .1 setlinewidth")
 
             # Draw the line
-            self.head.print("stroke")
-            self.head.print("grestore % border=True of ", self._comment)
+            print("stroke")
+            print("grestore % border=True")
 
-        if clip:
-            self.head.write(self._bounding_path())
-            self.head.head.print("clip")
+        if self.clip:
+            self._print_bounding_path(print)
+            head.print("clip % clip=True")
 
+        print("% end prolog of", comment)
 
-    def _bounding_path(self):
-        ret = PSBuffer()
-        print = ret.print
+        prolog.write_to(fp)
 
+        ec = encode(comment) + b"\n"
+        fp.write(b"gsave % begin " + ec)
+        super().write_to(fp)
+        fp.write(b"grestore % end " + ec)
+
+    def _print_bounding_path(self, print):
         # Set up a bounding box path
         print("newpath")
         print(self.x,          self.y,          "moveto")
@@ -105,8 +120,6 @@ class Box(BoxBuffer, Rectangle):
         print(self.x + self.w, self.y + self.h, "lineto")
         print(self.x + self.w, self.y,          "lineto")
         print("closepath")
-
-        return ret
 
 
 class Canvas(Box):
@@ -122,7 +135,8 @@ class Canvas(Box):
 
         # Move the origin to the lower left corner of the bounding box
         if x != 0 or y != 0:
-            self.head.print(self.x, self.y, "translate")
+            self.head.print(self.x, self.y, "translate",
+                            " % ", self._rich_comment)
 
         self._font_instance = None
 
@@ -275,8 +289,102 @@ class RasterImage(EPSBox):
         width, height = pil_image.size
         bb = Rectangle(0, 0, width, height)
 
+        # FIXME! This should be dealt with in a better manner.
+        # Maybe the PostScript document should have a color space
+        # that gets checked (and maybe converted) here.
         if pil_image.mode != "CMYK":
             pil_image = pil_image.convert("CMYK")
 
         super().__init__(self.raster_image_buffer(pil_image),
                          bb, document_level, border, clip, comment)
+
+class LineBox(Canvas):
+    """
+    A canvas for a single line of text to be rendered on.
+    """
+    def __init__(self, textbox, y, height):
+        self.textbox = textbox
+        super().__init__(0, y, textbox.line_width_at(y, height), height)
+
+class TextBoxOverflow(Exception):
+    pass
+
+class TextBox(Canvas):
+    """
+    A (rectangular) canvas for multiple lines of text (potentially
+    of different heights) may be rendered.
+
+    The TextBox maintains a cursor, starting at its top, counting it
+    down to 0 with every LineBox append()ed to it. It provides several
+    functions to construct LineBoxes that are connected to it but not
+    automatically appended.
+
+    You may only append() LineBox objects to a TextBox. However, a
+    textbox is a BoxBuffer which has a head and a tail.
+    """
+    def __init__(self, x, y, w, h, border=False, clip=False, comment=""):
+        super().__init__(x, y, w, h, border, clip, comment)
+
+        # The cursor is pointing at the upper edge of the box.
+        # With each line append()ed, it is advanced downward.
+        self._cursor = h
+
+    @property
+    def cursor(self):
+        return self._cursor
+
+    def write(self, *lines):
+        """
+        Only LineBoxes may be added to a TextBox. Adding lines
+        will advance the cursor downward. Advancing it past the bottom
+        will raise TextBoxOverflow().
+        """
+        for line in lines:
+            assert isinstance(thing, LineBox), TypeError
+            if self._cursor - line.h < 0:
+                raise TextBoxOverflow()
+            else:
+                self._cursor -= line.h
+                self._things.append(line)
+
+    @property
+    def lines(self):
+        return self._things
+
+    def __len__(self):
+        return len(self._things)
+
+    @property
+    def empty(self):
+        return len(self._things) == 0
+
+    def line_width_at(self, y, height):
+        """
+        Return the widht of a potential LineBox at `y` with
+        `height`. If such a line will not fit the TextBox, return
+        None. Should the cursor already have advanced past `y`,
+        a ValueError will be raised.
+        """
+
+        if y > self._cursor:
+            # Asking for a line above the cursor would overlap lines
+            # in this Textbox (or exceed the upper bound of the box).
+            raise ValueError()
+
+        if y - height < 0:
+            return None
+        else:
+            # Since this is a rectangular box we always return the box’s width.
+            return self.w
+
+    def room_left(self):
+        """
+        How much vertical room is left in this box?
+        """
+        return self._cursor
+
+    def has_room(self, height):
+        """
+        Does this textbox have room for a line of `height`?
+        """
+        return (self._cursor >= height)
