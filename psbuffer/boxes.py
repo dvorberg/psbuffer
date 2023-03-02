@@ -78,16 +78,40 @@ class Box(BoxBuffer, Rectangle):
         self.clip = clip
         self.comment = comment
 
+        self._font_instance = None
+
+    @property
+    def font(self):
+        return self._font_instance
+
+    @font.setter
+    def font(self, font_instance):
+        if self._font_instance != font_instance:
+            font_instance.setfont(self)
+        self._font_instance = font_instance
+
     @property
     def _rich_comment(self):
         return "%s: %s" % (self.__class__.__name__, self.comment)
 
     def write_to(self, fp):
+        self.write_prolog_to(fp)
+
+        ec = encode(self._rich_comment) + b"\n"
+        fp.write(b"% begin " + ec)
+        super().write_to(fp)
+        fp.write(b"% end " + ec)
+
+    def write_prolog_to(self, fp):
+        if not self.border and not self.clip:
+            return
+
         prolog = DSCBuffer()
         print = prolog.print
         comment = self._rich_comment
 
         print("% begin prolog of", comment)
+
         if self.border:
             print("gsave % border")
             self._print_bounding_path(print)
@@ -107,10 +131,6 @@ class Box(BoxBuffer, Rectangle):
 
         prolog.write_to(fp)
 
-        ec = encode(comment) + b"\n"
-        fp.write(b"gsave % begin " + ec)
-        super().write_to(fp)
-        fp.write(b"grestore % end " + ec)
 
     def _print_bounding_path(self, print):
         # Set up a bounding box path
@@ -121,8 +141,20 @@ class Box(BoxBuffer, Rectangle):
         print(self.x + self.w, self.y,          "lineto")
         print("closepath")
 
+class IsolatedBox(Box):
+    """
+    This box adds a gsave/grestore pair at the very beginning and end
+    of its content.
+    """
+    def write_to(self, fp):
+        self.write_prolog_to(fp)
 
-class Canvas(Box):
+        ec = encode(self._rich_comment) + b"\n"
+        fp.write(b"gsave % begin " + ec)
+        BoxBuffer.write_to(self, fp)
+        fp.write(b"grestore % end " + ec)
+
+class Canvas(IsolatedBox):
     """
     A canvas is a bow to draw on. By now the only difference to a box
     is that it has its own coordinate system. PostScript's translate
@@ -131,27 +163,15 @@ class Canvas(Box):
     """
     def __init__(self, x, y, w, h,
                  border=False, clip=False, comment=""):
-        Box.__init__(self, x, y, w, h, border, clip, comment)
+        super().__init__(x, y, w, h, border, clip, comment)
 
         # Move the origin to the lower left corner of the bounding box
         if x != 0 or y != 0:
             self.head.print(self.x, self.y, "translate",
                             " % ", self._rich_comment)
 
-        self._font_instance = None
 
-    @property
-    def font(self):
-        return self._font_instance
-
-    @font.setter
-    def font(self, font_instance):
-        if self._font_instance != font_instance:
-            font_instance.setfont(self)
-        self._font_instance = font_instance
-
-
-class EPSBox(Box):
+class EPSBox(IsolatedBox):
     """
     This is the base class for eps_image and raster_image below, which
     both embed external images into the target document as a Document
@@ -298,16 +318,30 @@ class RasterImage(EPSBox):
         super().__init__(self.raster_image_buffer(pil_image),
                          bb, document_level, border, clip, comment)
 
-class LineBox(Canvas):
+class TextBoxTooSmall(Exception):
+    """
+    A provided Textbox must be able to contain at least as many lines as the
+    dangle_threshold demands.
+    """
+    pass
+
+class LineBox(Box):
     """
     A canvas for a single line of text to be rendered on.
     """
     def __init__(self, textbox, y, height):
+        w = textbox.line_width_at(y, height)
+        if w is None:
+            raise TextBoxTooSmall()
+        super().__init__(0, y, w, height)
         self.textbox = textbox
-        super().__init__(0, y, textbox.line_width_at(y, height), height)
 
-class TextBoxOverflow(Exception):
-    pass
+    def on_parent_set(self):
+        """
+        When added to the textbox, the line is rendered into the the
+        body. (It is a boxes.BoxBuffer!)
+        """
+        self.print(0, self.y - self.h, "moveto")
 
 class TextBox(Canvas):
     """
@@ -336,16 +370,23 @@ class TextBox(Canvas):
     def write(self, *lines):
         """
         Only LineBoxes may be added to a TextBox. Adding lines
-        will advance the cursor downward. Advancing it past the bottom
-        will raise TextBoxOverflow().
+        will advance the cursor downward. No bounds check for the
+        bottom is performed.
         """
         for line in lines:
-            assert isinstance(thing, LineBox), TypeError
-            if self._cursor - line.h < 0:
-                raise TextBoxOverflow()
-            else:
-                self._cursor -= line.h
-                self._things.append(line)
+            assert isinstance(line, LineBox), TypeError
+
+            self._cursor -= line.h
+            super().write(line)
+
+    def typeset(self, lines):
+        self.write(*lines)
+
+    def pop(self):
+        """
+        Remove and return the last line.
+        """
+        return self._things.pop()
 
     @property
     def lines(self):
@@ -369,7 +410,7 @@ class TextBox(Canvas):
         if y > self._cursor:
             # Asking for a line above the cursor would overlap lines
             # in this Textbox (or exceed the upper bound of the box).
-            raise ValueError()
+            raise ValueError("y out of range, above cursor.")
 
         if y - height < 0:
             return None
@@ -388,3 +429,8 @@ class TextBox(Canvas):
         Does this textbox have room for a line of `height`?
         """
         return (self._cursor >= height)
+
+    def clear(self):
+        self._things = []
+        self._font_instance = None
+        self._cursor = self.h
