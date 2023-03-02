@@ -29,7 +29,7 @@ from typing import Sequence, Iterator
 
 from ..measure import has_dimensions
 from ..base import ps_literal
-from ..boxes import TextBox, LineBox, TextBoxTooSmall
+from ..boxes import TextBox, LineBox
 from ..fonts.fontbase import FontInstance
 from ..fonts.encoding_tables import breaking_whitespace_chars
 
@@ -221,8 +221,12 @@ class Line(LineBox):
             # doesn’t fit a line by itself. It will be typeset and run over
             # the textboxe’s right bound. It may be clipped e.g. by the
             # textbox’s clip= parameter.
-            print(word.hyphened_width, self.w)
             if word.syllables is None and word.hyphened_width > self.w:
+                # We need to check for textbox space, because it will not
+                # happen below.
+                if y - word.h < 0:
+                    raise TextBoxTooSmall()
+
                 if self.words:
                     # This line already has a words on it. Stop processing
                     # so the over-sized word may be put on the next line.
@@ -460,6 +464,8 @@ class HardParagraph(object):
     def line_height(self):
         return self.soft_paragraphs[0].line_height
 
+class TextBoxTooSmall(Exception):
+    pass
 
 class TextBoxesExhausted(Exception):
     pass
@@ -776,9 +782,13 @@ def main():
             for x in ( left_x, right_x, ):
                 y = page.h - page_margin
                 while y - height > 0:
-                    yield page.append(TextBox(x, y-height, width, height,
-                                              border=True,
-                                              comment="No %i" % counter))
+                    tb = page.append(TextBox(x, y-height, width, height,
+                                             border=True,
+                                             comment="No %i" % counter))
+                    yield tb
+                    print(tb.comment)
+                    print(tb.lines)
+                    print()
                     y -= height + mm(6)
                     counter += 1
 
@@ -801,9 +811,11 @@ def main():
                   "und nannte das Licht Tag und die Finsternis Nacht. Da ward "
                   "aus Abend und Morgen der erste Tag.")
 
-    tests = ( "Well that’s Supercalifragilisticexpialidocious! "
-              "Whatever happens on this line: Don’t Break Me! "
-              "And make sure I am not\u202Fbroken\u202Feither. "
+    # "Well that’s Supercalifragilisticexpialidocious! "
+    # "Whatever happens on this line: Don’t Break Me! "
+
+
+    tests = ( "And make sure I am not\u202Fbroken\u202Feither. "
               "But\u2000I\u2001am\u2002flexible\u2003and\u2004may\u2005be"
               "\u2006broken!")
 
@@ -824,7 +836,8 @@ def main():
     #        print(word, end=(" " if word.space_width > 0 else ""))
     #    print(line.words[-1].with_hyphen())
 
-    text = Text.from_text(genesis + "\n\n" + tests, cmusr12,
+    # genesis + "\n\n" +
+    text = Text.from_text(tests, cmusr12,
                           align="block",
                           margin_top=8, hyphenate_f=hyphenator)
 
