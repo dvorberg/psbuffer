@@ -32,23 +32,8 @@ U{http://partners.adobe.com/public/developer/ps/index_specs.html}.
 """
 import collections.abc, functools
 
-from .base import PSBuffer, encode
-from .utils import ps_escape
+from .base import PSBuffer, encode, ps_literal
 from .measure import has_dimensions, parse_size
-
-def ps_literal(value) -> bytes:
-    """
-    Convert Python primitive into a DSC literal. This will use
-    Python's str() function on the value, because it produces ideal
-    results for integer and float values. Strings will be quoted
-    according to the DSC's rules as layed out in the specifications on
-    page 36 (section 4.6, on <text>).
-    """
-    if type(value) in ( str, bytes ):
-        return ps_escape(value, False)
-    else:
-        return encode(str(value))
-
 
 class Comment(object):
     """
