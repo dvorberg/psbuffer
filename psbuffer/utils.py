@@ -143,36 +143,6 @@ def copy_linewise(frm:typing.BinaryIO, to:typing.BinaryIO,
 
 
 
-def ps_escape(s, always_parenthesis:bool=True) -> bytes:
-    """
-    Return a PostScript string literal containing s.
-
-    @param always_parenthesis: If set, the returned literal will always
-      have ()s around it. If it is not set, this will only happen, if
-      “s” contains a space char.
-
-    This should probably be re-writen in C.
-    """
-    chars = encode(s)
-
-    if not always_parenthesis and b" " in chars:
-        always_parenthesis = True
-
-    ret = bytearray()
-    if always_parenthesis:
-        ret.extend(b"(")
-
-    for a in chars:
-        if (a < 32) or (a in br"\()"):
-            ret.extend(br"\03%o" % a)
-        else:
-            ret.append(a)
-
-    if always_parenthesis:
-        ret.extend(b")")
-
-    return bytes(ret)
-
 def join80(seq: Sequence[bytes]) -> bytes:
     r"""
     Like b" ".join(seq) except that it uses \n occasionly to
@@ -338,9 +308,6 @@ def eps_file_without_preview(epsfp):
 
 
 if __name__ == "__main__":
-    print(ps_escape(b"Diedrich"))
-    print(ps_escape(b"Hallo Welt!"))
-    print()
     print(join80(b"Lorem ipsum dolor sit amet, consetetur sadipscing elitr, "
                  b"sed diam nonumy eirmod tempor invidunt ut labore et dolore "
                  b"magna aliquyam erat, sed diam voluptua. At vero eos et "
