@@ -25,6 +25,7 @@
 ##  I have added a copy of the GPL in the file gpl.txt.
 
 import os, io
+from collections.abc import Iterable
 
 STRING_ENCODING="utf-8"
 
@@ -73,8 +74,8 @@ def ps_literal(value) -> bytes:
     according to the DSC's rules as layed out in the specifications on
     page 36 (section 4.6, on <text>).
     """
-    if type(value) in ( str, bytes ):
-        return ps_escape(value, False)
+    if type(value) in ( str, bytes, bytearray, ):
+        return ps_escape(value, True)
     elif type(value) is float:
         ret = bytearray(b"%.3f" % value)
         while ret[-1] == b"0"[0]:
@@ -82,6 +83,8 @@ def ps_literal(value) -> bytes:
         if ret[-1] == b"."[0]:
             del ret[-1]
         return ret
+    elif isinstance(value, Iterable):
+        return b"[ " + b" ".join([ps_literal(v) for v in value]) + b" ]"
     else:
         return encode(str(value))
 
@@ -148,6 +151,9 @@ class PSBuffer(object):
                 pass
             else:
                 fp.write(thing)
+
+    def clear(self):
+        self._things = []
 
 class FileAsBuffer(object):
     def __init__(self, fp):
