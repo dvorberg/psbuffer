@@ -27,6 +27,7 @@
 import sys, functools, unicodedata, warnings
 from typing import Sequence
 
+from ..base import ps_literal, ps_escape
 from ..dsc import DSCBuffer, PageBase, ResourceSection
 from .encoding_tables import codepoint_to_glyph_name, unicode_space_characters
 
@@ -357,21 +358,24 @@ class FontInstance(object):
         container.print(b"(%s) show" % self.postscript_representation(
             container, codepoints))
 
-    def xshow(self, container, codepoints):
-        print = container.print
-        print(b"(" + self.postscript_representation(container,
-                                                    codepoints) + b") ",
-              end=" ")
-
+    def xshow_params(self, container, codepoints):
         if self.use_kerning:
             kerning_pairs = self.metrics.kerning_pairs
         else:
             kerning_pairs = {}
 
-        print(b"[", end=" ")
+        displacements = []
         for codepoint, next in zip(codepoints, codepoints[1:] + [0,]):
             kerning = kerning_pairs.get( (codepoint, next,), 0.0 )
-            print(self.charwidth(codepoint) + kerning + self.char_spacing,
-                  end=" ")
+            displacements.append(self.charwidth(codepoint)
+                                 + kerning
+                                 + self.char_spacing)
 
-        print(b"] xshow")
+        return ( self.postscript_representation(container, codepoints),
+                 displacements, )
+
+    def xshow(self, container, codepoints):
+        psrep, displacements = self.xshow_params(container, codepoints)
+        container.print(ps_literal(psrep),
+                        ps_literal(displacements),
+                        "xshow")
