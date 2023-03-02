@@ -318,22 +318,12 @@ class RasterImage(EPSBox):
         super().__init__(self.raster_image_buffer(pil_image),
                          bb, document_level, border, clip, comment)
 
-class TextBoxTooSmall(Exception):
-    """
-    A provided Textbox must be able to contain at least as many lines as the
-    dangle_threshold demands.
-    """
-    pass
-
 class LineBox(Box):
     """
     A canvas for a single line of text to be rendered on.
     """
     def __init__(self, textbox, y, height):
-        w = textbox.line_width_at(y, height)
-        if w is None:
-            raise TextBoxTooSmall()
-        super().__init__(0, y, w, height)
+        super().__init__(0, y, textbox.line_width_at(y, height), height)
         self.textbox = textbox
 
     def on_parent_set(self):
