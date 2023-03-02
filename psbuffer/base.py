@@ -34,6 +34,58 @@ def encode(s):
     else:
         return s
 
+def ps_escape(s, always_parenthesis:bool=True) -> bytes:
+    """
+    Return a PostScript string literal containing s.
+
+    @param always_parenthesis: If set, the returned literal will always
+      have ()s around it. If it is not set, this will only happen, if
+      “s” contains a space char.
+
+    This should probably be re-writen in C.
+    """
+    chars = encode(s)
+
+    if not always_parenthesis and b" " in chars:
+        always_parenthesis = True
+
+    ret = bytearray()
+    if always_parenthesis:
+        ret.extend(b"(")
+
+    for a in chars:
+        if (a < 32) or (a in br"\()"):
+            ret.extend(br"\03%o" % a)
+        else:
+            ret.append(a)
+
+    if always_parenthesis:
+        ret.extend(b")")
+
+    return bytes(ret)
+
+
+def ps_literal(value) -> bytes:
+    """
+    Convert Python primitive into a DSC literal. This will use
+    Python's str() function on the value, because it produces ideal
+    results for integer and float values. Strings will be quoted
+    according to the DSC's rules as layed out in the specifications on
+    page 36 (section 4.6, on <text>).
+    """
+    if type(value) in ( str, bytes ):
+        return ps_escape(value, False)
+    elif type(value) is float:
+        ret = bytearray(b"%.3f" % value)
+        while ret[-1] == b"0"[0]:
+            del ret[-1]
+        if ret[-1] == b"."[0]:
+            del ret[-1]
+        return ret
+    else:
+        return encode(str(value))
+
+
 class PSBuffer(object):
     """
     Contain PostScript source as byte-strings and other psbuffer objects
@@ -54,12 +106,12 @@ class PSBuffer(object):
         elif thing is None:
             return b""
         elif type(thing) is float:
-            return b"%.4f" % thing
+            return ps_literal(thing)
         else:
             return bytes(str(thing).encode(STRING_ENCODING))
 
     def write(self, *things):
-        self._things += [ self._convert(thing) for thing in things ]
+        self._things.extend([ self._convert(thing) for thing in things ])
 
     def append(self, thing):
         self.write(thing)
