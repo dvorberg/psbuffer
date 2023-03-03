@@ -362,6 +362,8 @@ class BytesIOSubfile:
 class FileWrapper(object):
     def __init__(self, fp):
         self.fp = fp
+        if hasattr(self.fp, "write_to"):
+            self.write_to = fp.write_to
 
     def write_to(self, fp):
         while True:
