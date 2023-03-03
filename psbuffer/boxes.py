@@ -23,6 +23,7 @@
 ##  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ##
 ##  I have added a copy of the GPL in the file gpl.txt.
+
 from uuid import uuid4 as uuid
 from typing import Sequence
 
@@ -309,11 +310,9 @@ class RasterImage(EPSBox):
         width, height = pil_image.size
         bb = Rectangle(0, 0, width, height)
 
-        # FIXME! This should be dealt with in a better manner.
-        # Maybe the PostScript document should have a color space
-        # that gets checked (and maybe converted) here.
-        if pil_image.mode != "CMYK":
-            pil_image = pil_image.convert("CMYK")
+        # FIXME: This should be dealt with more intelligently.
+        if pil_image.mode == "1":
+            pil_image = pil_image.convert("L")
 
         super().__init__(self.raster_image_buffer(pil_image),
                          bb, document_level, border, clip, comment)
