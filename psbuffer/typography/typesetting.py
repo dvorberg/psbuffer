@@ -24,7 +24,10 @@
 ##
 ##  I have added a copy of the GPL in the file gpl.txt.
 
-from ..boxes import TextBox, LineBox
+from typing import Sequence, Iterator
+
+from .cursors import Cursor
+from ..boxes import TextBox, LineBox, TextBoxesExhausted, TextBoxTooSmall
 
 class Line(LineBox):
     def __init__(self, textbox, y, cursor):
@@ -109,7 +112,6 @@ class Line(LineBox):
                             # maybe.
                             cursor.hyphanate_current()
                             continue
-                        else:
 
                 # *Do* append the word and set the new width and height.
 
@@ -126,8 +128,8 @@ class Line(LineBox):
                 self.word_space += word.w
 
             # We are at the end of a soft paragraph.
-            if ( cursor.was_end_of("soft_paragraph") )
-                 break
+            if cursor.was_end_of("soft_paragraph"):
+                break
 
         # If the last element in words is a syllable that’s not final
         # we need to make sure it has a hyphen and accommodate said hyphen
@@ -254,7 +256,7 @@ class Typesetter(object):
         while True:
             try:
                 yield Line(self.textbox, self.y, self.cursor)
-            except TextBoxTooSmall():
+            except TextBoxTooSmall:
                 break
 
             if stop_on():
@@ -263,7 +265,8 @@ class Typesetter(object):
 
     def typeset_hard_paragraph(self):
         while True:
-            lines = self.next_lines(stop_on=self.end_of_hard_paragraph)
+            lines = self.next_lines(
+                stop_on=lambda: self.cursor.was_end_of("hard_paragraph"))
             lines = list(lines)
 
             if len(lines) == 0:
