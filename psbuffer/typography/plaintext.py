@@ -28,10 +28,10 @@ import functools, copy, itertools, re, warnings
 from typing import Sequence, Iterator
 
 from ..measure import has_dimensions
-from ..base import ps_literal
 from ..boxes import TextBox, TextBoxesExhausted
 from ..fonts.fontbase import FontInstance
 from ..fonts.encoding_tables import breaking_whitespace_chars
+from ..utils import pretty_wordlist
 
 from .cursors import Cursor
 
@@ -40,25 +40,10 @@ Classes to represent text formatted with a single FontSpec (font, size,
 kerning, char_spacing) throughout.
 """
 
-def _pretty_wordlist(self_words):
-    words = []
-    for word in self_words:
-        words.append(word)
-        if word.space_width > 0:
-            words.append(" ")
-
-    if words:
-        if words[-1] == " ":
-            del words[-1]
-        words[-1] = words[-1].with_hyphen()
-
-        return "".join([str(w) for w in words])
-    else:
-        return ""
-
 class Syllable(has_dimensions):
     def __init__(self, font_wrapper:FontInstance, codepoints:Sequence[int],
                  final=False, space_width=None):
+        assert len(codepoints), ValueError("Syllables must not be empty.")
         self.font = font_wrapper
         self.codepoints = codepoints
         self.final = final
@@ -156,9 +141,7 @@ class Word(Syllable):
                 word, whitespace = pair
                 whitespace_codepoint = ord(whitespace[0])
 
-            yield Word(font_wrapper, word,
-                       whitespace_codepoint,
-                       hyphenate_f)
+            yield Word(font_wrapper, word, whitespace_codepoint, hyphenate_f)
 
 
     def __str__(self):
@@ -242,7 +225,7 @@ class SoftParagraph(object):
             return self._line_height
 
     def __repr__(self):
-        return f"<{self.__class__.__name__}: “{_pretty_wordlist(self.words)}”>"
+        return f"<{self.__class__.__name__}: “{pretty_wordlist(self.words)}”>"
 
 class HardParagraph(object):
     def __init__(self, soft_paragraphs:Sequence[SoftParagraph],
@@ -263,7 +246,7 @@ class HardParagraph(object):
         return self.soft_paragraphs[0].line_height
 
 newline_re_expr = "(?:\r\n|\r|\n)"
-single_newline_re = re.compile(newline_re_expr)
+single_newline_re = re.compile(r"\s*" + newline_re_expr + r"\s*")
 multiple_newline_re = re.compile(newline_re_expr + "{2}")
 breaking_whitespace_re = re.compile(r"([%s]+)" % breaking_whitespace_chars)
 class Text(object):
@@ -354,7 +337,7 @@ def main():
     document = Document()
 
     def textboxes():
-        width, height = mm(50), mm(100)
+        width, height = mm(50), mm(70)
 
         counter = 0
         while True:
@@ -370,18 +353,21 @@ def main():
                                              border=True,
                                              comment="No %i" % counter))
                     yield tb
-                    print(tb.comment)
-                    print(tb.lines)
-                    print()
                     y -= height + mm(6)
                     counter += 1
+
+                    if counter > 4:
+                        raise TextBoxesExhausted()
 
     cmusr12 = cmusr.make_instance(args.font_size)
 
     genesis = ("In the beginning God created the heaven and the earth. "
                "And the earth was without form, and void; and darkness "
-               "was upon the face of the deep. And the Spirit of God moved "
-               "upon the face of the waters. And God said, Let there be "
+               "was upon the face of the deep.\n\n"
+
+               "And the Spirit of God moved upon the face of the waters.\n\n"
+
+               "And God said, Let there be "
                "light: and there was light. And God saw the light, that "
                "it was good: and God divided the light from the darkness. "
                "And God called the light Day, and the darkness he called "
@@ -395,14 +381,12 @@ def main():
                   "und nannte das Licht Tag und die Finsternis Nacht. Da ward "
                   "aus Abend und Morgen der erste Tag.")
 
-    # "Well that’s Supercalifragilisticexpialidocious! "
-    # "Whatever happens on this line: Don’t Break Me! "
-
-
-    tests = ( "flexible "
+    tests = ( "Well that’s Supercalifragilisticexpialidocious! "
+              "Whatever happens on this line: Don’t Break Me! "
               "And make sure I am not\u202Fbroken\u202Feither. "
               "But\u2000I\u2001am\u2002flexible\u2003and\u2004may\u2005be"
-              "\u2006broken!")
+              "\u2006broken! "
+              "More text will create another line.")
 
     # Whatever happens:
     a = ("Don’t Break Me! "
@@ -421,8 +405,18 @@ def main():
     #        print(word, end=(" " if word.space_width > 0 else ""))
     #    print(line.words[-1].with_hyphen())
 
-    # genesis + "\n\n" +
-    text = Text.from_text(tests, cmusr12,
+    # genesis + "\n\n" + tests
+
+    text = ("Hallo Welt,\n"
+            "ab hier beginnt Text, der auf mehrere Zeilen umgebrochen wird."
+            "\n\n"
+            "Ich bin der zweite Absatz.")
+
+    # "soll und der geht hier auch noch weiter.\n"
+    #"Hier sollte eine neue Zeile beginnen."
+
+    text = genesis + "\n\n" + tests + "\n\n" + text
+    text = Text.from_text(text, cmusr12,
                           align="block",
                           margin_top=8, hyphenate_f=hyphenator)
 
@@ -431,70 +425,39 @@ def main():
             #pdb.set_trace()
             text.typeset(textboxes())
         except TextBoxesExhausted:
-            pass
+            raise
 
         document.write_to(args.outfile)
 
 
     def cursor_test():
         cursor = text.make_cursor()
-        for word in cursor:
-            print(repr(word))
+
+        print("cursor.is_first_of('syllables')",
+              cursor.is_first_of('syllables'))
+        print("cursor.was_last_of('syllables')",
+              cursor.was_last_of('syllables'))
+        print("cursor.was_last_of('soft_paragraphs')",
+              cursor.was_last_of('soft_paragraphs'))
+        print("cursor.was_last_of('hard_paragraphs')",
+              cursor.was_last_of('hard_paragraphs'))
 
         print()
-        print()
 
-        cursor = text.make_cursor()
-
-        #pdb.set_trace()
-
-        idx = 0
-        while True:
-            if idx == 4:
-                clone = cursor.clone_immutably()
-
-            cursor.hyphenate_current()
-
-            print(repr(cursor.current))
-
-            if not cursor.advance():
-                break
-
-            idx += 1
-
+        for counter, word in enumerate(cursor):
+            print(repr(word), repr(cursor))
 
         print()
+        print("Anything left in cursor?", bool(cursor))
         print()
-        cursor = clone.clone()
-        cursor.rewind()
-        cursor.rewind()
-        cursor.rewind()
-        print(cursor.rewind())
-        print(cursor.rewind())
-        print()
-        while True:
-            print(repr(cursor.current))
+        print("cursor.was_last_of('syllables')",
+              cursor.was_last_of('syllables'))
+        print("cursor.was_last_of('soft_paragraphs')",
+              cursor.was_last_of('soft_paragraphs'))
+        print("cursor.was_last_of('hard_paragraphs')",
+              cursor.was_last_of('hard_paragraphs'))
 
-            if not cursor.advance():
-                break
 
-        #print()
-        #print("1st", clone.first_of("syllables"))
-        #print("lst", clone.last_of("syllables"))
-
-        #print()
-        #print(repr(cursor.current_of("words")))
-
-        print()
-        print()
-        # Let’s take a look at Garbage Collection.
-        import gc
-        gc.collect()
-        oldcount = len(gc.get_objects())
-        del cursor
-        gc.collect()
-        newcount = len(gc.get_objects())
-        print("Garbage collected on `del cursor`:", oldcount-newcount)
 
 
     ps_test()

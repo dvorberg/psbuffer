@@ -24,10 +24,15 @@
 ##
 ##  I have added a copy of the GPL in the file gpl.txt.
 
+import pdb
+import warnings
 from typing import Sequence, Iterator
 
 from .cursors import Cursor
 from ..boxes import TextBox, LineBox, TextBoxesExhausted, TextBoxTooSmall
+from ..base import ps_literal
+from ..utils import pretty_wordlist
+
 
 class Line(LineBox):
     def __init__(self, textbox, y, cursor):
@@ -37,6 +42,8 @@ class Line(LineBox):
         `cursor` – A Cursor object pointing at the first word to be
             typeset on this line.
         """
+        self.first_of_hard_paragraph = cursor.at_beginning_of("hard_paragraph")
+
         super().__init__(textbox, y, 0)
         self.start_cursor = cursor.clone_immutably()
 
@@ -49,96 +56,118 @@ class Line(LineBox):
         self.align = cursor.current_of("soft_paragraphs").align
 
         for word in cursor:
-            # We start by dealing with an edge case: A word/syllable that
-            # doesn’t fit a line by itself. It will be typeset and run over
-            # the textboxe’s right bound. It may be clipped e.g. by the
-            # textbox’s clip= parameter.
-            if word.is_hyphenated and word.hyphened_width > self.w:
-                # We need to check for textbox space, because it will not
-                # happen below.
-                if y - word.h < 0:
-                    raise TextBoxTooSmall()
+            while (do_this := self._process_word_and_then(cursor)
+                   ) == "reprocess":
+                # Re-run self._process_word_and_then().
+                pass
 
-                if self.words:
-                    # This line already has a words on it. Stop processing
-                    # so the over-sized word may be put on the next line.
-                    break
-
-                # The over-sized word is the first and only one on this line.
-                self.words.append(word)
-                self._h = word.h
-
-                # Stop processing.
+            if do_this == "linebreak":
                 break
-
-            lwidth = ( self.word_space
-                       + self.last_space_width
-                       + word.hyphened_width)
-            if lwidth > self.w:
-                # Putting the word on this line would exceed the horizontal
-                # space. Can it hyphenate itself or is it monosyllabic?
-                if word.monosyllabic:
-                    # This line is full. Stop processing.
-                    break
-                else:
-                    # Try hyphenating the current word and start over.
-                    cursor.hyphenate_current()
-                    continue
-            else:
-                # Try to append the word.
-
-                # Appending the word may change this line’s height.
-                # Maybe it doesn’t fit the current textbox anymore.
-                new_height = word.h
-                if new_height > self.h:
-                    new_width = textbox.line_width_at(y, new_height)
-                    if new_width is None:
-                        # This Box won’t fit the current textbox anymore.
-                        raise TextBoxTooSmall()
-
-                    # The line would fit the textbox with the new height.
-                    # Let’s see if we can place the word on the line
-                    # considering the new width.
-                    if lwidth > new_width:
-                        # Try to hyphenate.
-                        if word.monosyllabic:
-                            # The word does not fit the line, even if we’d give
-                            # it the new height. The line is going to keep its
-                            # current width and height and we are done here.
-                            break
-                        else:
-                            # As above, we try to hyphenate the word
-                            # and start the process over with its syllables
-                            # maybe.
-                            cursor.hyphanate_current()
-                            continue
-
-                # *Do* append the word and set the new width and height.
-
-                # If it is not the first word, also add the whitespace
-                # width of the previous word.
-                if len(self.words) > 0:
-                    self.word_space += self.words[-1].space_width
-
-                self.words.append(word)
-                self._w = new_width
-                self._h = new_height
-
-                # Account for the space the word uses on the line.
-                self.word_space += word.w
-
-            # We are at the end of a soft paragraph.
-            if cursor.was_end_of("soft_paragraph"):
-                break
+            # Otherwise do_this is "advance" and we continue
 
         # If the last element in words is a syllable that’s not final
         # we need to make sure it has a hyphen and accommodate said hyphen
         # in word_space.
-        if not self.words[-1].final:
+        if self.words and not self.words[-1].final:
             self.words[-1] = self.words[-1].with_hyphen()
             self.word_space += self.words[-1].hyphen_width
 
-        self.end_cursor = cursor.clone_immutably()
+        #end_cursor = cursor.clone()
+        #end_cursor.rewind()
+        #self.end_cursor = end_cursor.clone_immutably()
+
+        self.last_of_hard_paragraph = cursor.was_last_of("soft_paragraphs")
+
+    def _process_word_and_then(self, cursor):
+        word = cursor.current
+
+        # We start by dealing with an edge case: A word/syllable that
+        # doesn’t fit a line by itself. It will be typeset and run over
+        # the textboxe’s right bound. It may be clipped e.g. by the
+        # textbox’s clip= parameter.
+        if word.is_hyphenated and word.hyphened_width > self.w:
+            # We need to check for textbox space, because it will not
+            # happen below.
+            if y - word.h < 0:
+                raise TextBoxTooSmall()
+
+            if self.words:
+                # This line already has a words on it. Stop processing
+                # so the over-sized word may be put on the next line.
+                return "linebreak"
+
+            # The over-sized word is the first and only one on this line.
+            self.words.append(word)
+            self._h = word.h
+
+            # Stop processing.
+            return "linebreak"
+
+        lwidth = ( self.word_space
+                   + self.last_space_width
+                   + word.hyphened_width)
+        if lwidth > self.w:
+            # Putting the word on this line would exceed the horizontal
+            # space. Can it hyphenate itself or is it monosyllabic?
+            if word.monosyllabic:
+                # This line is full. Stop processing.
+                return "linebreak"
+            else:
+                # Try hyphenating the current word and start over.
+                cursor.hyphenate_current()
+                return "reprocess"
+        else:
+            # Try to append the word.
+
+            # Appending the word may change this line’s height.
+            # Maybe it doesn’t fit the current textbox anymore.
+            new_height = word.h
+            if new_height > self.h:
+                new_width = self.textbox.line_width_at(self.y, new_height)
+                if new_width is None:
+                    # This Box won’t fit the current textbox anymore.
+                    raise TextBoxTooSmall()
+
+                # The line would fit the textbox with the new height.
+                # Let’s see if we can place the word on the line
+                # considering the new width.
+                if lwidth > new_width:
+                    # Try to hyphenate.
+                    if word.monosyllabic:
+                        # The word does not fit the line, even if we’d give
+                        # it the new height. The line is going to keep its
+                        # current width and height and we are done here.
+                        return "linebreak"
+                    else:
+                        # As above, we try to hyphenate the word
+                        # and start the process over with its syllables
+                        # maybe.
+                        cursor.hyphenate_current()
+                        return "reprocess"
+
+                self._w = new_width
+                self._h = new_height
+
+            # *Do* append the word and set the new width and height.
+
+            # If it is not the first word, also add the whitespace
+            # width of the previous word.
+            if len(self.words) > 0:
+                self.word_space += self.words[-1].space_width
+
+            self.words.append(word)
+
+            # Account for the space the word uses on the line.
+            self.word_space += word.w
+
+        # We are at the end of a soft paragraph.
+        if cursor.is_last_of("words"):
+            # The `break` in the for-loop above does not advance the
+            # cursor, so we must do it here.
+            cursor.advance()
+            return "linebreak"
+        else:
+            return "continue"
 
     @property
     def last_space_width(self):
@@ -211,7 +240,7 @@ class Line(LineBox):
         self.textbox._font_instance = font_instance
 
     def __repr__(self):
-        return f"<{self.__class__.__name__}: “{_pretty_wordlist(self.words)}”>"
+        return f"<{self.__class__.__name__}: “{pretty_wordlist(self.words)}”>"
 
 class Typesetter(object):
     def __init__(self, textboxes:Sequence[TextBox], cursor:Cursor):
@@ -227,11 +256,12 @@ class Typesetter(object):
         self.previous_textbox = self.textbox
         try:
             self.textbox = next(self.textboxes)
+            self.y = self.textbox.cursor
         except StopIteration:
             raise TextBoxesExhausted()
 
     def typeset(self):
-        for element in self.cursor:
+        while not self.cursor.was_last_of("hard_paragraphs"):
             self.hard_paragraph_break()
             self.typeset_hard_paragraph()
 
@@ -242,68 +272,77 @@ class Typesetter(object):
         if self.textbox.empty:
             self.y = self.textbox.cursor
         else:
-            self.y = self.textbox.cursor - para.margin_top
+            hp = self.cursor.current_of("hard_paragraphs")
+            self.y -= hp.margin_top
 
             if self.y <= 0:
                 # The margin_top already exhausted the vertical space
                 # available. We need a new one.
                 self.boxbreak()
 
-                # And we ignore the top margin in the new box.
-                self.y = self.textbox.cursor
-
     def next_lines(self, stop_on):
+        ret = []
+        y = self.y
         while True:
+            started_on = self.cursor.clone()
             try:
-                yield Line(self.textbox, self.y, self.cursor)
+                line = Line(self.textbox, y, self.cursor)
+                y -= line.h
+                ret.append(line)
             except TextBoxTooSmall:
-                break
+                # We ran out of vertical space in the current textbox.
+                # Reset the cursor to the state that started the last line
+                # and break.
+                self.cursor = started_on
+                return ret, "textbox"
 
             if stop_on():
-                break
+                return ret, "stop"
+
+        raise NotImplemented("It should not have come to this.")
 
 
     def typeset_hard_paragraph(self):
         while True:
-            lines = self.next_lines(
-                stop_on=lambda: self.cursor.was_end_of("hard_paragraph"))
-            lines = list(lines)
+            lines, ended_on = self.next_lines(
+                stop_on=lambda: self.cursor.was_last_of("soft_paragraphs"))
 
-            if len(lines) == 0:
-                if state.textbox.empty:
-                    # The edge-case first: The line to be rendered next
-                    # cannot fit this textbox despite the fact it’s empty.
-                    # Bummer.
+            if ( ended_on == "textbox"
+                 and len(lines) == 0
+                 and self.textbox.empty):
+                    # Not a single line could be rendered in the current
+                    # textbox. We force-render a single syllable to not
+                    # leave it empty.
                     self.append_oversized_syllable()
 
-                # We are done with this textbox.
-                state.boxbreak()
-
-                # We go back to the top of the while loop.
-                continue
+                    # We go back to the top of the while loop.
+                    continue
 
             hp = self.cursor.current_of("hard_paragraphs")
 
             # If `lines` starts with the first line in this paragraph,
             # we want to render at least `dangle threshold` lines.
-            if ( lines[0].start_cursor.at_beginning_of("hard_paragraph")
-                 and self.orphan_handled(lines, hp.dangle_threshold)):
-                continue
+            #if ( lines[0].first_of_hard_paragraph
+            #     and self.orphan_handled(lines, hp.dangle_threshold)):
+            #    continue
 
-            if ( self.cursor.was_end_of("hard_paragraph")
-                 and self.widow_handled(lines, hp.dangle_threshold)):
-                continue
+            #if ( self.cursor.was_end_of("hard_paragraph")
+            #     and self.widow_handled(lines, hp.dangle_threshold)):
+            #    continue
 
-
-
-            if self.cursor.was_end_of("hard_paragraph"):
-
-                if hp.algin == "block":
+            if lines[-1].last_of_hard_paragraph:
+                if hp.align == "block":
                     lines[-1].align = "left"
 
                 self.textbox.typeset(lines)
-
+                self.y = self.textbox.cursor
                 break
+            else:
+                self.textbox.typeset(lines)
+                self.y = self.textbox.cursor
+
+            if ended_on == "textbox":
+                self.boxbreak()
 
     def append_oversized_syllable(self):
         # Hyphenate for good measure.
@@ -313,8 +352,9 @@ class Typesetter(object):
         syllable = self.cursor.current
 
         # Try to fit the syllable by height.
-        boxwidth = self.textbox.line_width_at( self.textbox.cursor,
-                                               syllable.h)
+        boxwidth = self.textbox.line_width_at(
+            self.textbox.cursor, syllable.h)
+
         if boxwidth is None:
             # On failure get the line width for a 0-height line.
             boxwidth = textbox.line_width_at( self.textbox.cursor, 0)
@@ -324,7 +364,7 @@ class Typesetter(object):
                 # let max() throw a TypeError below.
                 boxwidth = 0.0
 
-        width = max(syllable.hyphened_width, boxwidht)
+        width = max(syllable.hyphened_width, boxwidth)
 
         # The syllable will fit this box.
         fake_textbox = TextBox(0, 0, boxwidth, syllable.h)
@@ -337,13 +377,15 @@ class Typesetter(object):
 
         # Make sure the top of the letters meets the top of the
         # textbox. If not clipped, this will not look pretty.
-        line.head.print(0, textbox.h-fake_textbox.h, "transform")
+        line.head.print(0, self.textbox.h-fake_textbox.h, "transform")
 
         # Add the line to the textbox…
-        textbox.append(line)
+        self.textbox.append(line)
 
-        warnings.warn(f"Under-sized textbox “{textbox.comment}”, "
-                      f"forced “repr({syllable})” into it.")
+        self.cursor.advance()
+
+        warnings.warn(f"Under-sized textbox “{self.textbox.comment}”, "
+                      f"forced “{repr(syllable)}” into it.")
 
 
     def orphan_handled(self, prepared_lines, dangle_threshold):
@@ -380,7 +422,8 @@ class Typesetter(object):
         # We are at the end of the current hard paragraph.
 
         # Do we have a widow?
-        if len(prepared_lines) - dangle_threshold:
+        if ( len(prepared_lines) - dangle_threshold
+             and self.previous_textbox is not None):
             # Less than `dangle threshold` lines have been prepared for
             # rendering in this box. Can we move words from the
             # previous textbox without leaving it empty?

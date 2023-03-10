@@ -306,6 +306,22 @@ def eps_file_without_preview(epsfp):
         marker, pspos, pslength = struct.unpack("<III", header[:12])
         return Subfile(epsfp, pspos, pslength)
 
+def pretty_wordlist(self_words):
+    words = []
+    for word in self_words:
+        words.append(word)
+        if word.space_width > 0:
+            words.append(" ")
+
+    if words:
+        if words[-1] == " ":
+            del words[-1]
+        words[-1] = words[-1].with_hyphen()
+
+        return "".join([str(w) for w in words])
+    else:
+        return ""
+
 
 if __name__ == "__main__":
     print(join80(b"Lorem ipsum dolor sit amet, consetetur sadipscing elitr, "

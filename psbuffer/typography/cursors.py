@@ -29,6 +29,7 @@
 Cursor classes.
 """
 import sys, dataclasses
+import pdb
 
 class CursorIsImmutable(Exception):
     pass
@@ -58,12 +59,10 @@ class Cursor(object):
         self.superior.inferior = self
         self._cursors_by_name = self.superior._cursors_by_name
         self._cursors_by_name[self.attribute_name] = self
-
+        self._was_at_end = False
         self.inferior = None
 
-        self._exhausted = False
         self.current_index = current_index
-
 
     @classmethod
     def make_cursors_for(Cursor, root_object, attribute_names):
@@ -117,10 +116,12 @@ class Cursor(object):
         Return True on success, False if we’re pointing at the last
         element in the tree.
         """
-        if self.current_index == self.max_index:
-            self._exhausted = True
-            return self.superior.advance()
+        if self.last:
+            ret = self.superior.advance()
+            self._was_at_end = True
+            return ret
         else:
+            self._was_at_end = False
             self.current_index += 1
             if self.inferior is not None:
                 self.inferior.reset_to_first()
@@ -140,11 +141,13 @@ class Cursor(object):
 
     def reset_to_first(self):
         self.current_index = 0
-        self._exhausted = False
+        if self.inferior is not None:
+            self.inferior.reset_to_first()
 
     def reset_to_last(self):
         self.current_index = -1
-        self._exhausted = False
+        if self.inferior is not None:
+            self.inferior.reset_to_last()
 
     def __iter__(self):
         while True:
@@ -153,16 +156,28 @@ class Cursor(object):
                 break
 
     def next(self):
-        if self._exhausted:
+        if self.last:
             return None
         else:
             ret = self.current
             self.advance()
             return ret
 
-    @property
-    def exhausted(self):
-        return self._exhausted
+    def __repr__(self):
+        info = []
+        cursor = self
+        while cursor.superior is not None:
+            if "paragraph" in cursor.attribute_name:
+                current = f"<{cursor.current.__class__.__name__}>"
+            else:
+                current = repr(cursor.current)
+            info.append(f"{cursor.attribute_name}[{cursor.current_index}]="
+                        f"{current}" )
+            cursor = cursor.superior
+        return " ".join(info)
+
+    def __bool__(self):
+        return not self.last
 
     def hyphenate_current(self):
         """
@@ -182,21 +197,20 @@ class Cursor(object):
     def is_first_of(self, attribute_name):
         return self._cursors_by_name[attribute_name].first
 
-    def was_last_of(self, attribute_name):
-        return self._cursors_by_name[attribute_name].exhausted
+    def is_last_of(self, attribute_name):
+        return self._cursors_by_name[attribute_name].last
 
-    def was_end_of(self, singular):
+    def was_last_of(self, attribute_name):
         """
-        Was the last leaf element the last in a cursor?
-        attribute_name = `singular` + "s"
+        Is the previous current at the very end of `attribute_name`?
         """
         # To be at the end of a level, all the inferior cursors
-        # must be exhausted.
-        cursor = self._cursors_by_name[singular + "s"]
-        while cursor.inferior is not None:
-            cursor = cursor.inferior
-            if not cursor.exhausted:
+        # must be at their end.
+        cursor = self._cursors_by_name[attribute_name]
+        while cursor is not None:
+            if not cursor._was_at_end:
                 return False
+            cursor = cursor.inferior
 
         return True
 
@@ -215,17 +229,23 @@ class Cursor(object):
 
         return True
 
+    def at_end_of(self, singular):
+        """
+        Are we currently at the start of an element?
+        attribute_name = `singular` + "s"
+        """
+        # To be at the very end, the cursor and
+        # all the cursor’s inferiors must be at last.
+        cursor = self._cursors_by_name[singular + "s"]
+        while cursor is not None:
+            if not cursor.last:
+                return False
+            cursor = cursor.inferior
 
+        return True
 
     def current_of(self, attribute_name):
         return self._cursors_by_name[attribute_name].current
-
-    #def advance_the(self, attribute_name):
-    #    return self._cursors_by_name[attribute_name].advance()
-
-    #def rewind_the(self, attribute_name):
-    #    return self._cursors_by_name[attribute_name].rewind()
-
 
 
 class ImmutableCursor(Cursor):
@@ -235,12 +255,12 @@ class ImmutableCursor(Cursor):
     """
     def __init__(self, superior, cursor: Cursor):
         self.superior = superior
+        self.inferior = None
         self.superior.inferior = self
         self.attribute_name = cursor.attribute_name
         self._cursors_by_name = self.superior._cursors_by_name
         self._cursors_by_name[self.attribute_name] = self
         self._current_index = cursor.current_index
-        self._exhausted = cursor._exhausted
         self.last = cursor.last
         self.first = cursor.first
 
