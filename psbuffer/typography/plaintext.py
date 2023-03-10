@@ -29,7 +29,7 @@ from typing import Sequence, Iterator
 
 from ..measure import has_dimensions
 from ..base import ps_literal
-from ..boxes import TextBox
+from ..boxes import TextBox, TextBoxesExhausted
 from ..fonts.fontbase import FontInstance
 from ..fonts.encoding_tables import breaking_whitespace_chars
 
@@ -55,13 +55,6 @@ def _pretty_wordlist(self_words):
         return "".join([str(w) for w in words])
     else:
         return ""
-
-class TextBoxTooSmall(Exception):
-    pass
-
-class TextBoxesExhausted(Exception):
-    pass
-
 
 class Syllable(has_dimensions):
     def __init__(self, font_wrapper:FontInstance, codepoints:Sequence[int],
@@ -201,7 +194,7 @@ class Word(Syllable):
                                 for chars in syllables ]
             self._syllables[-1].final = True
         else:
-            syllables = ( self, )
+            self._syllables = ( self, )
 
         return self._syllables
 
@@ -317,7 +310,7 @@ class Text(object):
 
     def typeset(self, textboxes:Sequence[TextBox]):
         from .typesetting import Typesetter
-        typesetter = Typesetter(self.make_cursor(), textboxes)
+        typesetter = Typesetter(textboxes, self.make_cursor())
         typesetter.typeset()
 
 
@@ -361,7 +354,7 @@ def main():
     document = Document()
 
     def textboxes():
-        width, height = mm(25), mm(10)
+        width, height = mm(50), mm(100)
 
         counter = 0
         while True:
@@ -504,8 +497,8 @@ def main():
         print("Garbage collected on `del cursor`:", oldcount-newcount)
 
 
-    # ps_test()
-    cursor_test()
+    ps_test()
+    # cursor_test()
 
 if __name__ == "__main__":
     main()
