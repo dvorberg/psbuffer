@@ -332,6 +332,12 @@ class LineBox(Box):
         """
         self.print(0, self.y - self.h, "moveto")
 
+class TextBoxTooSmall(Exception):
+    pass
+
+class TextBoxesExhausted(Exception):
+    pass
+
 class TextBox(Canvas):
     """
     A (rectangular) canvas for multiple lines of text (potentially
