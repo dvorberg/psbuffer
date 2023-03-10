@@ -235,6 +235,7 @@ class ImmutableCursor(Cursor):
     """
     def __init__(self, superior, cursor: Cursor):
         self.superior = superior
+        self.superior.inferior = self
         self.attribute_name = cursor.attribute_name
         self._cursors_by_name = self.superior._cursors_by_name
         self._cursors_by_name[self.attribute_name] = self
