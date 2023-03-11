@@ -114,11 +114,17 @@ class Box(BoxBuffer, Rectangle):
         print("% begin prolog of", comment)
 
         if self.border:
-            print("gsave % border")
+            print("gsave % border=True")
             self._print_bounding_path(print)
 
+            if type(self.border) is tuple:
+                color, linewidth = self.border
+            else:
+                color = "0 setgray"
+                linewidth = ".1"
             # Set color to black, line type to solid and width to 'hairline'
-            print("0 setgray [] 0 setdash .1 setlinewidth")
+            # "[] 0 setdash",
+            print(color, linewidth, " setlinewidth")
 
             # Draw the line
             print("stroke")
@@ -321,16 +327,40 @@ class LineBox(Box):
     """
     A canvas for a single line of text to be rendered on.
     """
-    def __init__(self, textbox, y, height):
-        super().__init__(0, y, textbox.line_width_at(y, height), height)
+    def __init__(self, textbox, top, height):
+        super().__init__(0, top-height,
+                         textbox.line_width_at(top, height), height)
+        self.top = top
         self.textbox = textbox
+
+    @property
+    def w(self):
+        return self._w
+
+    @w.setter
+    def w(self, w):
+        self._w = w
+
+    @property
+    def h(self):
+        return self._h
+
+    @h.setter
+    def h(self, h):
+        self._h = h
+
+    @property
+    def y(self):
+        return self.top - self.h
 
     def on_parent_set(self):
         """
         When added to the textbox, the line is rendered into the the
         body. (It is a boxes.BoxBuffer!)
         """
-        self.print(0, self.y - self.h, "moveto")
+        self.print(0, self.y-self.h, "moveto")
+
+
 
 class TextBoxTooSmall(Exception):
     pass
@@ -362,6 +392,12 @@ class TextBox(Canvas):
     def cursor(self):
         return self._cursor
 
+    def advance_cursor(self, amount):
+        if self.cursor - amount < 0:
+            raise TextBoxTooSmall()
+        else:
+            self._cursor -= amount
+
     def write(self, *lines):
         """
         Only LineBoxes may be added to a TextBox. Adding lines
@@ -371,8 +407,8 @@ class TextBox(Canvas):
         for line in lines:
             assert isinstance(line, LineBox), TypeError
 
-            self._cursor -= line.h
             super().write(line)
+            self._cursor -= line.h
 
     def typeset(self, lines):
         self.write(*lines)
