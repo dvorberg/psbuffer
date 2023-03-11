@@ -75,9 +75,11 @@ class Font(object):
     def resource_section(self):
         raise NotImplemented()
 
-    def make_instance(self, size:float, char_spacing:float=0.0,
+    def make_instance(self, size:float,
+                      char_spacing:float=0.0,
+                      line_height:float=None,
                       use_kerning:bool=True):
-        return FontInstance(self, size, char_spacing, use_kerning)
+        return FontInstance(self, size, char_spacing, line_height, use_kerning)
 
 
 class GlyphMetric:
@@ -263,10 +265,15 @@ class FontInstance(object):
     (show and xshow)
     """
     def __init__(self, font:Font, size:float,
-                 char_spacing:float, use_kerning:bool):
+                 char_spacing:float, line_height:float,
+                 use_kerning:bool):
         self.font = font
         self.size = size
         self.char_spacing = char_spacing
+        if line_height:
+            self.line_height = line_height
+        else:
+            self.line_height = size
         self.use_kerning = use_kerning
 
         # Maps unicode code point to width:float in regular PostScrpipt units.
