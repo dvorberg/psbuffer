@@ -161,7 +161,7 @@ class Line(LineBox):
             self.word_space += word.w
 
         # We are at the end of a soft paragraph.
-        if cursor.is_last_of("words"):
+        if cursor.at_end_of("soft_paragraph"):
             # The `break` in the for-loop above does not advance the
             # cursor, so we must do it here.
             cursor.advance()
@@ -194,10 +194,18 @@ class Line(LineBox):
         if len(self.words) < 2:
             block_gap = 0.0
         else:
-            block_gap = (self.w-self.word_space) / (len(self.words)-1)
+            count = 0
+            for word in self.words:
+                if word.space_width > 0 or word.with_hyphen:
+                    count += 1
+            if count < 2:
+                count = 2
+
+            block_gap = (self.w-self.word_space) / (count-1)
 
         def block_modify_displacements_for(word):
-            line_displacements[-1] += word.space_width + block_gap
+            if word.space_width > 0:
+                line_displacements[-1] += word.space_width + block_gap
 
         y = self.y
         if self.align == "left":
