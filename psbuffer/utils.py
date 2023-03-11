@@ -79,7 +79,7 @@ class LineIterator(object):
             return self.last_line
 
         old = self.fp.tell()
-        buffer = self.fp.read(512)
+        buffer = self.fp.read(1024)
 
         bytes_read = len(buffer)
         if bytes_read == 0: # eof
