@@ -24,7 +24,7 @@
 ##
 ##  I have added a copy of the GPL in the file gpl.txt.
 
-import functools, copy, itertools, re, warnings
+import functools, copy, itertools, re, warnings, unicodedata
 from typing import Sequence, Iterator
 
 from ..measure import has_dimensions
@@ -61,7 +61,7 @@ class Syllable(has_dimensions):
         """
         The width of the hyphen in this word’s font.
         """
-        return self.font.charwidth(45) # 45 = “-”
+        return self.font.charwidth(45) #* 0.9 # 45 = “-”
 
     def with_hyphen(self):
         if self.final:
@@ -75,7 +75,7 @@ class Syllable(has_dimensions):
 
     @property
     def h(self):
-        return self.font.size
+        return self.font.line_height
 
     @property
     def space_width(self):
@@ -151,25 +151,38 @@ class Word(Syllable):
         return self
 
     characters_re = re.compile(r"(\w+)(.*)")
+    soft_hyphen = unicodedata.lookup("SOFT HYPHEN")
     def hyphenate(self):
         """
         Try to hyphenate the word and store the result for syllables()
         below.
         """
-        # This is much more complicated than one would think.
-        # The hyphenator only knows about regular language words.
-        # That’s what we feed him. We keep the rest of the characters
-        # and put them back in the result on returning it.
-        syllables = None
-        match = self.characters_re.match(self.word)
-        if match is not None:
-            start, extra = match.groups()
+        if self.soft_hyphen in self.word:
+            # If the word contains a soft hyphen, this is where we split it.
+            syllables = self.word.split(self.soft_hyphen)
+            # Just in case the soft-hyphen was at the end of the word,
+            # we remove empty entries and superflous white space.
+            syllables = [ s.strip() for s in syllables ]
+            syllables = [ s for s in syllables if s]
 
-            syllables = self._hyphenate_f(start)
-            if syllables:
-                if extra:
-                    # Put the extra characters on the last syllable.
-                    syllables[-1] += extra
+            if len(syllables) < 1:
+                # Edge-case to prevent exceptions.
+                syllables = ( self.word, )
+        else:
+            # This is much more complicated than one would think.
+            # The hyphenator only knows about regular language words.
+            # That’s what we feed him. We keep the rest of the characters
+            # and put them back in the result on returning it.
+            syllables = None
+            match = self.characters_re.match(self.word)
+            if match is not None:
+                start, extra = match.groups()
+
+                syllables = self._hyphenate_f(start)
+                if syllables:
+                    if extra:
+                        # Put the extra characters on the last syllable.
+                        syllables[-1] += extra
 
         if syllables:
             self._syllables = [ Syllable(self.font, [ ord(s) for s in chars ],
@@ -206,23 +219,15 @@ class Word(Syllable):
         return f"“{self.word}@{self.w:.2f}pt”"
 
 class SoftParagraph(object):
-    def __init__(self, words:Sequence[Word], align="left", line_height=None):
+    def __init__(self, words:Sequence[Word], align="left"):
         self.words = list(words)
         assert len(self.words) > 0, ValueError(
             "SoftParagraph must not be empty.")
 
         self.align = align
-        self._line_height = line_height
 
     def clone(self, words):
-        return self.__class__(words, self.align, self.line_height)
-
-    @property
-    def line_height(self):
-        if self._line_height is None:
-            return self.words[0].h
-        else:
-            return self._line_height
+        return self.__class__(words, self.align)
 
     def __repr__(self):
         return f"<{self.__class__.__name__}: “{pretty_wordlist(self.words)}”>"
@@ -240,10 +245,6 @@ class HardParagraph(object):
 
         self.align = align
         self.dangle_threshold = dangle_threshold
-
-    @property
-    def line_height(self):
-        return self.soft_paragraphs[0].line_height
 
 newline_re_expr = "(?:\r\n|\r|\n)"
 single_newline_re = re.compile(r"\s*" + newline_re_expr + r"\s*")
@@ -266,7 +267,6 @@ class Text(object):
                   font:FontInstance,
                   align="left",
                   margin_top=0.0, margin_bottom=0.0, dangle_threshold=2,
-                  line_height=None,
                   hyphenate_f=None):
         """
         • Multiple newlines separate hard paragraphs.
@@ -281,7 +281,7 @@ class Text(object):
             for part in single_newline_re.split(text):
                 words = Word.words_from_text(
                     font, part, hyphenate_f=hyphenate_f)
-                yield SoftParagraph(words, align, line_height)
+                yield SoftParagraph(words, align)
 
         def hard_paragraphs(text):
             for para in multiple_newline_re.split(text):
@@ -324,11 +324,11 @@ def main():
     args = parser.parse_args()
 
     # Download and install the hyphenation dict for German, if needed
-    hyphenator = Hyphenator("en_US").syllables
+    #hyphenator = Hyphenator("en_US").syllables
     # de_DE `language`defaults to 'en_US'
+    hyphenator = Hyphenator("en_US").syllables
 
     page_margin = mm(16)
-    line_height = args.font_size * 1.25
 
     # Load the font
     cmusr = Type1(args.outline.open(), args.metrics.open())
@@ -350,8 +350,14 @@ def main():
                 y = page.h - page_margin
                 while y - height > 0:
                     tb = page.append(TextBox(x, y-height, width, height,
-                                             border=True,
                                              comment="No %i" % counter))
+
+                    tb.head.print("0 0 moveto")
+                    tb.head.print(0, tb.h, "lineto")
+                    tb.head.print(tb.w, tb.h, "lineto")
+                    tb.head.print(tb.w, 0, "lineto")
+                    tb.head.print(".95 setgray fill 0 setgray")
+
                     yield tb
                     y -= height + mm(6)
                     counter += 1
@@ -359,7 +365,8 @@ def main():
                     if counter > 4:
                         raise TextBoxesExhausted()
 
-    cmusr12 = cmusr.make_instance(args.font_size)
+    cmusr12 = cmusr.make_instance(args.font_size,
+                                  line_height=args.font_size*1.25)
 
     genesis = ("In the beginning God created the heaven and the earth. "
                "And the earth was without form, and void; and darkness "
@@ -372,6 +379,31 @@ def main():
                "it was good: and God divided the light from the darkness. "
                "And God called the light Day, and the darkness he called "
                "Night. And the evening and the morning were the first day.")
+
+    john = unicodedata.normalize(
+        "NFC",
+        "John 1,1 Ἐν ἀρχῇ ἦν ὁ λόγος, καὶ ὁ λόγος ἦν πρὸς τὸν θεόν, καὶ θεὸς "
+        "ἦν ὁ λόγος. 2 οὗτος ἦν ἐν ἀρχῇ πρὸς τὸν θεόν. 3 πάντα διʼ αὐτοῦ "
+        "ἐγένετο, καὶ χωρὶς αὐτοῦ ἐγένετο ⸂οὐδὲ :ἕν⸃. ὃ γέγονεν 4 ἐν αὐτῷ ζωὴ "
+        "⸀ἦν, καὶ ἡ ζωὴ ἦν τὸ φῶς ⸋τῶν ἀνθρώπων⸌· 5 καὶ τὸ φῶς ἐν τῇ σκοτίᾳ "
+        "φαίνει, καὶ ἡ σκοτία αὐτὸ οὐ κατέλαβεν.\n\n"
+
+        "6 Ἐγένετο ἄνθρωπος, ἀπεσταλμένος παρὰ ⸀θεοῦ,⸆ ὄνομα αὐτῷ Ἰωάννης· "
+        "7 οὗτος ἦλθεν εἰς μαρτυρίαν ἵνα μαρτυρήσῃ περὶ τοῦ φωτός, ἵνα "
+        "πάντες πιστεύσωσιν διʼ αὐτοῦ. 8 οὐκ ἦν ἐκεῖνος τὸ φῶς, ἀλλʼ ἵνα "
+        "μαρτυρήσῃ περὶ τοῦ φωτός.\n\n"
+
+        "9 Ἦν τὸ φῶς τὸ ἀληθινόν, ὃ φωτίζει πάντα ἄνθρωπον, ἐρχόμενον εἰς "
+        "τὸν κόσμον. 10 ἐν τῷ κόσμῳ ἦν, καὶ ὁ κόσμος διʼ αὐτοῦ ἐγένετο, καὶ "
+        "ὁ κόσμος αὐτὸν οὐκ ἔγνω. 11 εἰς τὰ ἴδια ἦλθεν, καὶ οἱ ἴδιοι αὐτὸν "
+        "οὐ παρέλαβον. 12 ὅσοι δὲ ἔλαβον αὐτόν, ἔδωκεν αὐτοῖς ἐξουσίαν τέκνα "
+        "θεοῦ γενέσθαι, τοῖς πιστεύουσιν εἰς τὸ ὄνομα αὐτοῦ, 13 oοἳ οὐκ ἐξ "
+        "αἱμάτων οὐδὲ ἐκ θελήματος σαρκὸς ⸋οὐδὲ ἐκ θελήματος ἀνδρὸς⸌ ἀλλʼ ἐκ "
+        "θεοῦ ἐγεννήθησαν.\n\n"
+
+        "14 Καὶ ὁ λόγος σὰρξ ἐγένετο καὶ ἐσκήνωσεν ἐν ἡμῖν, καὶ ἐθεασάμεθα "
+        "τὴν δόξαν αὐτοῦ, δόξαν ὡς μονογενοῦς παρὰ πατρός, πλήρης χάριτος "
+        "καὶ ἀληθείας.")
 
     genesis_de = ("Am Anfang schuf Gott Himmel und Erde. Und die Erde war  "
                   "wüst und leer, und es war finster auf der Tiefe; und der "
@@ -417,8 +449,8 @@ def main():
 
     text = genesis + "\n\n" + tests + "\n\n" + text
     text = Text.from_text(text, cmusr12,
-                          align="block",
-                          margin_top=8, hyphenate_f=hyphenator)
+                          align="block", margin_top=8,
+                          hyphenate_f=hyphenator)
 
     def ps_test():
         try:
