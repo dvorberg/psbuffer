@@ -2,7 +2,7 @@
 
 ##  This file is part of psg, PostScript Generator.
 ##
-##  Copyright 23 by Diedrich Vorberg <diedrich@tux4web.de>
+##  Copyright 2023 by Diedrich Vorberg <diedrich@tux4web.de>
 ##
 ##  All Rights Reserved
 ##
@@ -50,7 +50,7 @@ def hyphenate(word):
     """
     # The ooo hyphenator works on monotonic modern Greek. Well, can’t blame
     # it: This is what Greeks write nowerdays. Our source material, however,
-    # is polytonic ancent Greek and for the purpose of art I’d like to keep
+    # is polytonic ancient Greek and for the purpose of art I’d like to keep
     # it that way. The hyphenation will be an appropriation, but good enough
     # for me.
     # Welcome to the real world, where shits get complicated fast.
@@ -157,6 +157,8 @@ def main():
     page = document.page
 
     tb = page.append(TriangularTextBox(page.w, page.h, topwidth, 1.396))
+    # Where does 1.396 come from? Try and error.
+    # What? This is art!
 
     try:
         text.typeset([tb,])
