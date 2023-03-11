@@ -88,7 +88,7 @@ class Line(LineBox):
         if word.is_hyphenated and word.hyphened_width > self.w:
             # We need to check for textbox space, because it will not
             # happen below.
-            if y - word.h < 0:
+            if self.top - word.h < 0:
                 raise TextBoxTooSmall()
 
             if self.words:
@@ -217,7 +217,7 @@ class Line(LineBox):
         elif self.align == "center":
             self.print((self.w - self.word_space) / 2.0, y, "moveto")
             modify_displacements_for = space_based_modify_displacements_for
-        elif self.align == "block":
+        elif self.align.startswith("block"):
             self.print(0, y, "moveto")
             modify_displacements_for = block_modify_displacements_for
         else:
@@ -333,7 +333,7 @@ class Typesetter(object):
                 continue
 
             if lines[-1].last_of_hard_paragraph:
-                if hp.align == "block":
+                if hp.align == "block-last-left":
                     lines[-1].align = "left"
 
                 self.textbox.typeset(lines)
