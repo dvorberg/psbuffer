@@ -35,16 +35,16 @@ from ..utils import pretty_wordlist
 
 
 class Line(LineBox):
-    def __init__(self, textbox, y, cursor):
+    def __init__(self, textbox, top, cursor):
         """
         `textbox` – That’s the textbox this Line might be rendered in.
-        `y` – The top of the line y-coordinate.
+        `top` – The top of the line y-coordinate.
         `cursor` – A Cursor object pointing at the first word to be
             typeset on this line.
         """
         self.first_of_hard_paragraph = cursor.at_beginning_of("hard_paragraph")
 
-        super().__init__(textbox, y, 0)
+        super().__init__(textbox, top, 0)
         self.start_cursor = cursor.clone_immutably()
 
         # List of words on this line.
@@ -98,7 +98,7 @@ class Line(LineBox):
 
             # The over-sized word is the first and only one on this line.
             self.words.append(word)
-            self._h = word.h
+            self.h = word.h
 
             # Stop processing.
             return "linebreak"
@@ -145,8 +145,8 @@ class Line(LineBox):
                         cursor.hyphenate_current()
                         return "reprocess"
 
-                self._w = new_width
-                self._h = new_height
+                self.w = new_width
+                self.h = new_height
 
             # *Do* append the word and set the new width and height.
 
@@ -199,19 +199,18 @@ class Line(LineBox):
         def block_modify_displacements_for(word):
             line_displacements[-1] += word.space_width + block_gap
 
+        y = self.y
         if self.align == "left":
-            self.print(0, self.y - self.h, "moveto")
+            self.print(0, y, "moveto")
             modify_displacements_for = space_based_modify_displacements_for
         elif self.align == "right":
-            self.print(self.w - self.word_space,
-                       self.y - self.h, "moveto")
+            self.print(self.w - self.word_space, y, "moveto")
             modify_displacements_for = space_based_modify_displacements_for
         elif self.align == "center":
-            self.print((self.w - self.word_space) / 2.0,
-                       self.y - self.h, "moveto")
+            self.print((self.w - self.word_space) / 2.0, y, "moveto")
             modify_displacements_for = space_based_modify_displacements_for
         elif self.align == "block":
-            self.print(0, self.y - self.h, "moveto")
+            self.print(0, y, "moveto")
             modify_displacements_for = block_modify_displacements_for
         else:
             raise ValueError(self.align)
@@ -256,7 +255,6 @@ class Typesetter(object):
         self.previous_textbox = self.textbox
         try:
             self.textbox = next(self.textboxes)
-            self.y = self.textbox.cursor
         except StopIteration:
             raise TextBoxesExhausted()
 
@@ -269,20 +267,16 @@ class Typesetter(object):
         # If the current textbox is empty, we ignore the top margin.
         # Otherwise we start with our cursor advanced by the hard
         # paragraph’s margin top.
-        if self.textbox.empty:
-            self.y = self.textbox.cursor
-        else:
+        if not self.textbox.empty:
             hp = self.cursor.current_of("hard_paragraphs")
-            self.y -= hp.margin_top
-
-            if self.y <= 0:
-                # The margin_top already exhausted the vertical space
-                # available. We need a new one.
+            try:
+                self.textbox.advance_cursor(hp.margin_top)
+            except TextBoxTooSmall:
                 self.boxbreak()
 
     def next_lines(self, stop_on):
         ret = []
-        y = self.y
+        y = self.textbox.cursor
         while True:
             started_on = self.cursor.clone()
             try:
@@ -307,9 +301,8 @@ class Typesetter(object):
             lines, ended_on = self.next_lines(
                 stop_on=lambda: self.cursor.was_last_of("soft_paragraphs"))
 
-            if ( ended_on == "textbox"
-                 and len(lines) == 0
-                 and self.textbox.empty):
+            if len(lines) == 0:
+                if ended_on == "textbox" and self.textbox.empty:
                     # Not a single line could be rendered in the current
                     # textbox. We force-render a single syllable to not
                     # leave it empty.
@@ -317,32 +310,38 @@ class Typesetter(object):
 
                     # We go back to the top of the while loop.
                     continue
+                else:
+                    self.boxbreak()
+                    continue
 
             hp = self.cursor.current_of("hard_paragraphs")
 
             # If `lines` starts with the first line in this paragraph,
             # we want to render at least `dangle threshold` lines.
-            #if ( lines[0].first_of_hard_paragraph
-            #     and self.orphan_handled(lines, hp.dangle_threshold)):
-            #    continue
+            if self.orphan_handled(ended_on, lines, hp.dangle_threshold):
+                continue
 
-            #if ( self.cursor.was_end_of("hard_paragraph")
-            #     and self.widow_handled(lines, hp.dangle_threshold)):
-            #    continue
+            if self.widow_handled(lines, hp.dangle_threshold):
+                continue
 
             if lines[-1].last_of_hard_paragraph:
                 if hp.align == "block":
                     lines[-1].align = "left"
 
                 self.textbox.typeset(lines)
-                self.y = self.textbox.cursor
-                break
+
+                try:
+                    self.textbox.advance_cursor(hp.margin_bottom)
+                except TextBoxTooSmall:
+                    self.boxbreak()
+
+                return
             else:
                 self.textbox.typeset(lines)
-                self.y = self.textbox.cursor
 
             if ended_on == "textbox":
                 self.boxbreak()
+
 
     def append_oversized_syllable(self):
         # Hyphenate for good measure.
@@ -388,7 +387,7 @@ class Typesetter(object):
                       f"forced “{repr(syllable)}” into it.")
 
 
-    def orphan_handled(self, prepared_lines, dangle_threshold):
+    def orphan_handled(self, ended_on, prepared_lines, dangle_threshold):
         """
         ORPHAN: “A paragraph-opening line that appears by itself at
         the bottom of a page or column.”
@@ -396,7 +395,9 @@ class Typesetter(object):
         Reuturn True if an orphan has been handled and typsetting
         has to start over with a new self.cursor.
         """
-        if len(prepared_lines) < dangle_threshold: # orphan!
+        if (ended_on == "textbox"
+            and prepared_lines[0].first_of_hard_paragraph
+            and len(prepared_lines) <= dangle_threshold): # orphan!
             if self.textbox.empty:
                 # If without our current lines the textbox is empty,
                 # `dangle threshold` lines are not going to fit anyway.
@@ -420,9 +421,10 @@ class Typesetter(object):
         has to start over with a new self.cursor.
         """
         # We are at the end of the current hard paragraph.
-
         # Do we have a widow?
-        if ( len(prepared_lines) - dangle_threshold
+        if ( prepared_lines[-1].last_of_hard_paragraph
+             and self.textbox.empty
+             and len(prepared_lines) <= dangle_threshold
              and self.previous_textbox is not None):
             # Less than `dangle threshold` lines have been prepared for
             # rendering in this box. Can we move words from the
@@ -434,7 +436,7 @@ class Typesetter(object):
             # Walk those lines backwards and find the one that’s the first
             # of this hard paragraph, if it is in this textbox.
             idx = len(plines) - 1
-            while idx > 0 and not plines[idx].at_beginning_of("hard_paragraph"):
+            while idx > 0 and not plines[idx].first_of_hard_paragraph:
                 idx -= 1
 
             # The number of lines of this hard paragraph
@@ -445,7 +447,7 @@ class Typesetter(object):
                 and available > dangle_threshold):
                 removed = plines.pop()
 
-                self.boxbreak()
+                # self.boxbreak()
                 self.cursor = removed.start_cursor.clone()
 
                 # This will start typesetting over. If we still have a widow,
