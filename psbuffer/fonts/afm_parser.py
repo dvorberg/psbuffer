@@ -577,7 +577,8 @@ class CharMetrics(data_section):
 
             key = elements[0]
             if len(elements) < 2:
-                raise AFMParseError("CharMetrics key without data")
+                raise AFMParseError(
+                    "CharMetrics key without data " + repr(line))
             else:
                 elements = elements[1:]
                 data = join(elements)
