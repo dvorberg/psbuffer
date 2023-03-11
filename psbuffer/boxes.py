@@ -329,7 +329,8 @@ class LineBox(Box):
     """
     def __init__(self, textbox, top, height):
         super().__init__(0, top-height,
-                         textbox.line_width_at(top, height), height)
+                         textbox.line_width_at(top, height), height,
+                         border=False)
         self.top = top
         self.textbox = textbox
 
@@ -437,7 +438,6 @@ class TextBox(Canvas):
         None. Should the cursor already have advanced past `y`,
         a ValueError will be raised.
         """
-
         if y > self._cursor:
             # Asking for a line above the cursor would overlap lines
             # in this Textbox (or exceed the upper bound of the box).
@@ -447,14 +447,22 @@ class TextBox(Canvas):
             return None
         else:
             # Since this is a rectangular box we always return the box’s width.
-            return self.w
+            return self._calculate_width_at(y, height)
 
+    def _calculate_width_at(self, y, height):
+        """
+        Calculate the width at a height, after all the checks are done.
+        """
+        return self.w
+
+    @property
     def room_left(self):
         """
         How much vertical room is left in this box?
         """
         return self._cursor
 
+    @property
     def has_room(self, height):
         """
         Does this textbox have room for a line of `height`?
