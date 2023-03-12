@@ -188,13 +188,23 @@ class EPSBox(IsolatedBox):
         super().__init__(bb.llx, bb.lly, bb.w, bb.h, border, clip, comment)
         self.subfile = FileWrapper(subfile)
         self.document_level = document_level
+        self.resource_identifyer = None
+        self._used = False
 
     def on_parent_set(self):
-        self.ps_identifyer = "psg_eps_file*%i" % (
-            self.document.new_embed_number(), )
-        self.resource_identifyer = str(uuid())+".eps"
+        if self.resource_identifyer is None:
+            self.resource_identifyer = str(uuid())+".eps"
+            self._initialize_resource()
+        else:
+            if not self.document_level:
+                raise IOError("When using an EPSBox more than once, "
+                              "use document_level=True to avoid output "
+                              "of multiple redundant copied.")
 
+    def _initialize_resource(self):
         if self.document_level:
+            ps_identifyer = "psg_eps_file*%i" % (
+                self.document.new_embed_number(), )
             # If the EPS file is supposed to live at document level,
             # we create a file resource in its prolog.
 
@@ -203,7 +213,7 @@ class EPSBox(IsolatedBox):
             resource = ResourceSection("file", self.resource_identifyer)
             self.document.add_resource(resource)
 
-            resource.print("/%sImageData currentfile" % self.ps_identifyer)
+            resource.print("/%sImageData currentfile" % ps_identifyer)
             resource.print("<< /Filter /SubFileDecode")
             resource.print("   /DecodeParms << /EODCount")
             resource.print("       0 /EODString (***EOD***) >>")
@@ -212,7 +222,7 @@ class EPSBox(IsolatedBox):
             resource.print("***EOD***")
             resource.print("def")
             resource.print()
-            resource.print("/%s " % self.ps_identifyer)
+            resource.print("/%s " % ps_identifyer)
             resource.print("<< /FormType 1")
             resource.print("   /BBox [%f %f %f %f]" % self.as_tuple())
             resource.print("   /Matrix [ 1 0 0 1 0 0]")
@@ -222,15 +232,15 @@ class EPSBox(IsolatedBox):
             resource.print("         /showpage {} def")
             resource.print("         /setpagedevice /pop load def")
             resource.print("         %sImageData 0 setfileposition" % (
-                                                          self.ps_identifyer) )
+                                                          ps_identifyer) )
             resource.print("            %sImageData cvx exec" % (
-                                                          self.ps_identifyer) )
+                                                          ps_identifyer) )
             resource.print("       ostate restore")
             resource.print("   } bind")
             resource.print(">> def")
 
             # Store the ps code to use the eps file in self
-            self.print("%s execform" % self.ps_identifyer)
+            self.print("%s execform" % ps_identifyer)
         else:
             self.document.add_resource(procsets.embed_eps)
             self.print("psg_begin_epsf")
@@ -239,6 +249,7 @@ class EPSBox(IsolatedBox):
             self.print()
             self.append(Comment("EndDocument"))
             self.print("psg_end_epsf")
+
 
     def fit(self, canvas):
         """
@@ -267,7 +278,7 @@ class EPSImage(EPSBox):
     Include a EPS complient PostScript document into the target
     PostScript file.
     """
-    def __init__(self, fp, document_level=False,
+    def __init__(self, fp, document_level=True,
                  border=False, clip=False, comment=""):
         """
         @param fp: File pointer opened for reading of the EPS file to be
@@ -304,7 +315,7 @@ class RasterImage(EPSBox):
         def write_to(self, fp):
             self.pil_image.save(fp, "EPS")
 
-    def __init__(self, pil_image, document_level=False,
+    def __init__(self, pil_image, document_level=True,
                  border=False, clip=False, comment=""):
         """
         @param pil_image: Instance of PIL's image class
