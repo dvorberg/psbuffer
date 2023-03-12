@@ -138,3 +138,5 @@ examples/out.eps
 examples/x.ps
 psbuffer/base.py
 .DS_Store
+examples/font_sample.ps
+examples/pythagoras.ps
