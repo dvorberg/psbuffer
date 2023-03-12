@@ -1,0 +1,4 @@
+#!/Users/diedrich/Code/psbuffer/virtualenv/bin/python
+import sys
+from psbuffer.cmdline.rearrange import booklet_main as main
+sys.exit(main())
