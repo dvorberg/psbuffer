@@ -475,6 +475,15 @@ class PagesSection(PseudoSection):
     def page_objects(self):
         return self._things[1:]
 
+    def __len__(self):
+        return len(self.page_objects)
+
+    def __getitem__(self, idx):
+        return self.page_objects[idx]
+
+    def __iter__(self):
+        return iter(self.page_objects)
+
     @property
     def page_count(self):
         # self._things[0] == b"" !
@@ -617,7 +626,6 @@ class PageSetupSection(Section):
 
 class PageTrailerSection(Section):
     has_end = False
-
 
 class ResourceSection(Section):
     def __init__(self, type, *info):
