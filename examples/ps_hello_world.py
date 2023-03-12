@@ -3,7 +3,12 @@ from io import BytesIO
 from psbuffer.dsc import Document, Page
 from psbuffer.boxes import Canvas
 from psbuffer.measure import mm
-from psbuffer.utils import ps_escape
+from psbuffer.base import ps_escape
+
+"""
+Print a minimal DSC complient Postscript file to stdout that will greet
+the user in the traditional way.
+"""
 
 document = Document()
 page = document.append(Page())
@@ -23,5 +28,3 @@ fp = BytesIO()
 document.write_to(fp)
 
 print(fp.getvalue().decode("ascii"))
-
-input()

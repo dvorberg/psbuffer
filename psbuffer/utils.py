@@ -24,7 +24,7 @@
 ##
 ##  I have added a copy of the GPL in the file gpl.txt.
 
-import re, struct, typing
+import os, os.path as op, re, struct, typing, pathlib, argparse
 from collections.abc import Sequence
 
 from .measure import Rectangle
@@ -362,3 +362,70 @@ if __name__ == "__main__":
 
     print()
     print()
+
+def default_filepath(filepath:str, ext:str):
+    """
+    Return a path derived from `filepath` with the file’s extension
+    replaced by `ext`.
+    """
+    filepath = pathlib.Path(filepath)
+    return filepath.parent.joinpath(filepath.stem + ext)
+
+def make_example_argument_parser(
+        main_file_path,
+        description,
+        i=False,      # Input .txt file
+        o=True,       # Output .ps file
+        s=False,      # Font size
+        default_font_size=12,
+        S=False,      # Paper size
+        font=False):  # PFA und AFM file
+    parser = argparse.ArgumentParser(description=description)
+
+    txtfile = default_filepath(main_file_path, ".txt")
+    psfile = default_filepath(main_file_path, ".ps")
+
+    if i:
+        parser.add_argument(
+            "-i", "--input", default=txtfile,
+            help=f"Input .txt file, defaults to {txtfile.name}.")
+
+    if o:
+        parser.add_argument(
+            "-o", "--outfile", type=argparse.FileType("bw"), default=psfile,
+            help=f"Output file, defaults to {psfile.name}.")
+
+    if s:
+        parser.add_argument(
+            "-s", "--font-size", type=float, default=default_font_size,
+            help="Font size in pt, defaults to 12.")
+
+    if font:
+        parser.add_argument(
+            "-O", "--font-outline",
+            help="PFA or PFB file. The font must contain polytonic "
+            "Greek letters as composed glyphs for this to work. "
+            "The proviced Computer Modern Unicode Sans Serif "
+            "works fine; it is also the default.",
+            default=pathlib.Path(op.dirname(main_file_path),
+                                 "CMUSerif-Roman.pfb"),
+            type=pathlib.Path)
+
+        parser.add_argument("-M", "--font-metrics",
+                            default=pathlib.Path(op.dirname(main_file_path),
+                                                 "CMUSerif-Roman.afm"),
+                            help="The corresponding AFM file.",
+                            type=pathlib.Path)
+
+    return parser
+
+def make_font_instance_from_args(args):
+    from psbuffer.fonts import Type1
+
+    # Load the font
+    cmusr = Type1(args.font_outline.open(), args.font_metrics.open())
+
+    instance = cmusr.make_instance(
+        args.font_size, line_height=args.font_size*1.25)
+
+    return instance

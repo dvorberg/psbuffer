@@ -33,10 +33,10 @@ import sys, os, os.path as op, argparse, pathlib, unicodedata, warnings
 from hyphen import Hyphenator
 
 from psbuffer.measure import mm
+from psbuffer import utils
 from psbuffer.base import ps_literal
 from psbuffer.boxes import TextBox, TextBoxesExhausted
 from psbuffer.dsc import EPSDocument
-from psbuffer.fonts import Type1
 from psbuffer.typography.plaintext import Text
 
 phi = 1.6181
@@ -98,43 +98,12 @@ class TriangularTextBox(TextBox):
         return self._w
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-i", "--input",
-                        default=pathlib.Path(__file__.replace(".py", ".txt")),
-                        help="Input .txt file")
-    parser.add_argument("-o", "--outfile", help="Output file. "
-                        "Deafults to stdout.",
-                        type=argparse.FileType("bw"),
-                        default=None)
-    parser.add_argument("-s", "--font-size", help="Font size in pt",
-                        type=float, default=12)
-
-    parser.add_argument("-O", "--font-outline",
-                        help="PFA or PFB file. The font must contain polytonic"
-                        "Greek letters as composed glyphs for this to work. "
-                        "The proviced Computer Modern Unicode Sans Serif "
-                        "works fine.",
-                        default=pathlib.Path(op.dirname(__file__),
-                                             "CMUSerif-Roman.pfb"),
-                        type=pathlib.Path)
-    parser.add_argument("-M", "--font-metrics",
-                        default=pathlib.Path(op.dirname(__file__),
-                                             "CMUSerif-Roman.afm"),
-                        help="AFM file", type=pathlib.Path)
-
+    parser = utils.make_example_argument_parser(
+        __file__, __doc__, i=True, o=True, s=True, font=True)
     args = parser.parse_args()
-
-    if args.outfile is None:
-        args.outfile = sys.stdout.buffer
+    cmusr12 = utils.make_font_instance_from_args(args)
 
     page_margin = mm(16)
-
-    # Load the font
-    cmusr = Type1(args.font_outline.open(), args.font_metrics.open())
-
-    cmusr12 = cmusr.make_instance(
-        args.font_size, line_height=args.font_size*1.25)
-
     with args.input.open("r") as fp:
         intext = fp.read()
         paras = intext.split("\n\n")
@@ -167,7 +136,7 @@ def main():
 
 
     # Typeset source. Man, helper functions are needed.
-    cmusr10 = cmusr.make_instance(
+    cmusr10 = cmusr12.font.make_instance(
         args.font_size*0.5, line_height=args.font_size)
     tb.tail.print(0.25, "setgray")
     source_tb = tb.tail.append(TextBox(0, tb.room_left - cmusr10.line_height,
@@ -182,6 +151,6 @@ def main():
     top = tb.room_left * (1-1/phi)
     tb.head.print(left, -top, "translate")
 
-    document.write_to(args.outfile)
+    document.write_to(args.outfile.open("wb"))
 
 main()

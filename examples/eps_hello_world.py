@@ -3,7 +3,12 @@ from io import BytesIO
 from psbuffer.dsc import EPSDocument, Page
 from psbuffer.boxes import Canvas
 from psbuffer.measure import mm
-from psbuffer.utils import ps_escape
+from psbuffer.base import ps_escape
+
+"""
+Print a minimal EPS file to stdout that will greet the user in the
+traditional way.
+"""
 
 document = EPSDocument( (mm(100), mm(100),) )
 canvas = document.page.append(Canvas(mm(10), mm(10), mm(80), mm(80)))

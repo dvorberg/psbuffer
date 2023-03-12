@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 ##  This file is part of psg, PostScript Generator.
 ##
@@ -32,6 +32,7 @@ PostScript document on stdout.
 
 import sys, argparse, pathlib, unicodedata
 
+from psbuffer import utils
 from psbuffer.dsc import EPSDocument, Page
 from psbuffer.boxes import Canvas
 from psbuffer.measure import mm
@@ -43,45 +44,35 @@ that displays a sample of the font.
 """
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-o", "--outfile", help="Output file. "
-                        "Deafults to stdout.", type=argparse.FileType("bw"),
-                        default=sys.stdout.buffer)
-    parser.add_argument("-s", "--font-size", help="Font size in pt",
-                        type=float, default=12)
-    parser.add_argument("outline", help="PFA or PFB file", type=pathlib.Path)
-    parser.add_argument("metrics", help="AFM file", type=pathlib.Path)
-
+    parser = utils.make_example_argument_parser(
+        __file__, __doc__, o=True, s=True, font=True)
     args = parser.parse_args()
 
     cellpadding = mm(1)
     page_margin = mm(16)
 
-    font_size = args.font_size
     chars = """ABCDEFGHIJKLMNOPQRSTUVWXYZ
                abcdefghijklmnopqrstuvwxyz
                äöüÄÖÜß 0123456789
                !\"§$%&/()=?€@ „“ “” »«
                «∑€®†Ωπ@∆ºª©ƒ∂‚å¥≈√∫∞"""
 
-    # Load the font
-    font = Type1(args.outline.open(), args.metrics.open())
-
     # Create the EPS document
     document = EPSDocument("a4")
     page = document.page
 
     # Register the font with the document
-    font_wrapper = page.make_font_wrapper(font, font_size)
+    font_wrapper = utils.make_font_instance_from_args(args)
+    font = font_wrapper.font
 
     # Ok, we got to find out a number of things: Dimensions of the cells,
     # dimensions of the table
     m = 0
     for char in chars:
-        m = max(m, font.metrics.charwidth(ord(char), font_size))
+        m = max(m, font.metrics.charwidth(ord(char), args.font_size))
 
     td_width = m + 2*cellpadding
-    td_height = font_size + 2*cellpadding
+    td_height = args.font_size + 2*cellpadding
 
     lines = [ line.strip() for line in chars.split("\n") ]
     lines.reverse()
@@ -120,8 +111,10 @@ def main():
     table.print("grestore")
 
     # This is what font_wrapper.setfont() does:
-    table.print("/%s findfont" % font_wrapper.encoding.ps_name)
-    table.print("%f scalefont" % font_size)
+    # You may also use the `font` property of any Canvas (derived)
+    # object, which will call font_wrapper.setfont()
+    table.print("/%s findfont" % font_wrapper.encoding(table).ps_name)
+    table.print("%f scalefont" % args.font_size)
     table.print("setfont")
 
     # Fill the boxes.
@@ -129,12 +122,13 @@ def main():
         for cc, char in enumerate(line):
             x = cc * td_width + cellpadding
             y = lc * td_height + cellpadding
-            psrep = font_wrapper.postscript_representation( [ord(char),] )
+            psrep = font_wrapper.postscript_representation(
+                table, [ord(char),] )
 
             table.print(x, y, "moveto")
             table.print(b"(%s) show" % psrep)
 
     page.bounding_box = table.bounding_box
-    document.write_to(args.outfile)
+    document.write_to(args.outfile.open("wb"))
 
 main()

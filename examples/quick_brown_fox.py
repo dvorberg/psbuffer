@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 ##  This file is part of psg, PostScript Generator.
 ##
@@ -30,36 +30,29 @@ Print a test string in a specified font.
 
 import sys, argparse, pathlib
 
+from psbuffer import utils
 from psbuffer.dsc import EPSDocument, Page
 from psbuffer.boxes import Canvas
 from psbuffer.measure import mm
-from psbuffer.fonts import Type1
 
-"""\
+"""
 Create a (Encapsulated) Postscript document with one A4 page
 that displays a sample of the font.
 """
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-o", "--outfile", help="Output file. "
-                        "Deafults to stdout.", type=argparse.FileType("bw"),
-                        default=sys.stdout.buffer)
-    parser.add_argument("-s", "--font-size", help="Font size in pt",
-                        type=float, default=12)
+    parser = utils.make_example_argument_parser(
+        __file__, __doc__, o=True, s=True, font=True)
     parser.add_argument("-t", "--text",
                         default="The quick brown fox jumps over the lazy dog.",
                         help="Text to render")
-    parser.add_argument("outline", help="PFA or PFB file", type=pathlib.Path)
-    parser.add_argument("metrics", help="AFM file", type=pathlib.Path)
 
     args = parser.parse_args()
 
+    font = utils.make_font_instance_from_args(args)
+
     page_margin = mm(16)
     line_height = args.font_size * 1.25
-
-    # Load the font
-    font = Type1(args.outline.open(), args.metrics.open())
 
     # Create the EPS document
     document = EPSDocument("a5")
@@ -69,8 +62,6 @@ def main():
                                 page.h - 2*page_margin))
 
     # Register the font with the document
-    font_wrapper = page.make_font_wrapper(font, args.font_size)
-
     def _line_y():
         y = canvas.h
         while y >= 0.0:
@@ -81,13 +72,13 @@ def main():
     def newline():
         canvas.print(0, next(line_y), "moveto")
 
-    canvas.print(font_wrapper.setfont())
+    font.setfont(canvas)
 
     newline()
-    canvas.print(font_wrapper.show(args.text))
+    canvas, font.show(canvas, [ord(c) for c in args.text])
 
     newline()
-    canvas.print(font_wrapper.xshow(args.text))
+    font.xshow(canvas, [ord(c) for c in args.text])
 
     document.write_to(args.outfile)
 
