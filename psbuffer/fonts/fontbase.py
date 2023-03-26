@@ -28,13 +28,15 @@ import sys, functools, unicodedata, warnings
 from typing import Sequence
 
 from ..base import ps_literal, ps_escape
-from ..dsc import DSCBuffer, PageBase, ResourceSection
+from ..dsc import DSCBuffer, Document, ResourceSection
 from .encoding_tables import codepoint_to_glyph_name, unicode_space_characters
+
 
 class FontResourceSection(ResourceSection):
     def __init__(self, font):
         super().__init__("font", font.ps_name)
         self.font = font
+
 
 class Font(object):
     """
@@ -68,12 +70,15 @@ class Font(object):
     def has_char(self, codepoint):
         return codepoint in self.metrics
 
-    def make_encoding_for_page(self, page:PageBase):
-        return PageSpecificFontEncoding(self, page)
+    def make_encoding(self, document:Document):
+        return FontEncoding(self, document)
 
     @property
     def resource_section(self):
         raise NotImplemented()
+
+    def add_to(self, document):
+        pass
 
     def make_instance(self, size:float,
                       char_spacing:float=0.0,
@@ -118,6 +123,7 @@ class FontMetrics(dict):
     def charwidth(self, codepoint, font_size):
         return self.get(codepoint, self[32]).width * font_size
 
+
 class SetupLinesForFont(object):
     def __init__(self, font_wrapper):
         self.font_wrapper = font_wrapper
@@ -131,7 +137,7 @@ class SetupLinesForFont(object):
 
     def setup_lines(self):
         """
-        Return the PostScript code that goes into the page's setup
+        Return the PostScript code that goes into the document's setup
         section.
         """
         font = self.font_wrapper.font
@@ -177,56 +183,56 @@ class SetupLinesForFont(object):
         return setup.encode("ascii")
 
 
-class PageSpecificFontEncoding(object):
+class FontEncoding(object):
     """
-    The PageSpecificFontEncoding maintains a per-page mapping of
-    8bit codes for unicode codepoints.
+    The FontEncoding maintains a mapping of 8bit codes for unicode
+    codepoints.
 
     self.mappging: Maps unciode code points (int) to 8-bit PostScript
        codes used to encode corresponding glyphs.
     """
-    def __init__(self, font:Font, page:PageBase):
+    def __init__(self, font:Font, document:Document):
         self.font = font
         self.metrics = font.metrics
-        self.page = page
+        self.document = document
 
         self.mapping = {}
         for a in range(32,127):
             self.mapping[a] = a
         self.next = 127
 
-        page.setup.append(SetupLinesForFont(self))
+        document.setup.append(SetupLinesForFont(self))
 
     def has_char(self, codepoint):
         return codepoint in self.metrics
 
-    @functools.cached_property
-    def ordinal(self):
-        return self.page.ordinal
+    def pscodes_for(self, codepoints:Sequence[int]):
+        """
+        Run pscode_for() below for each of the `codepoints`.
+        """
+        return [ self.pscode_for(codepoint) for codepoint in codepoints ]
 
-    def pscodes_for(self, codepoints:Sequence[int], ignore_missing=True):
-        return [ self.pscode_for(codepoint, ignore_missing)
-                 for codepoint in codepoints ]
-
-    def pscode_for(self, codepoint:int, ignore_missing=True):
-        if codepoint not in self.mapping:
+    def pscode_for(self, codepoint:int):
+        """
+        Return an (8-bit) integer representing `codepoint` for use in
+        *show with this font or None if either the required glyph
+        is not present in this font or the 8-bit space is exhausted.
+        """
+        if not codepoint in self.mapping:
             if not self.font.has_char(codepoint):
-                if ignore_missing:
-                    if codepoint in codepoint_to_glyph_name:
-                        tpl = ( self.font.ps_name,
-                                codepoint_to_glyph_name[codepoint], )
-                    else:
-                        tpl = ( self.font.ps_name, "#%i" % codepoint, )
+                #if codepoint in codepoint_to_glyph_name:
+                #    tpl = ( self.font.ps_name,
+                #            codepoint_to_glyph_name[codepoint], )
+                #else:
+                #    tpl = ( self.font.ps_name, "#%i" % codepoint, )
 
-                    msg = "%s does not contain needed glyph %s" % tpl
-                    warnings.warn(msg)
-                    codepoint = 32 # space
-                else:
-                    tpl = ( codepoint, repr(unichr(codepoint)), )
-                    msg = "No glyph for unicode codepoint %i (%s)" % tpl
-                    raise KeyError(msg)
+                #msg = "%s does not contain needed glyph %s" % tpl
+                #warnings.warn(msg)
+                return None
+            else:
+                if len(self.mapping) > 253:
+                    return None
 
-            if not codepoint in self.mapping:
                 self.next += 1
 
                 if self.next > 254:
@@ -239,9 +245,10 @@ class PageSpecificFontEncoding(object):
                     if next == -1:
                         # If these are exhausted as well, replace
                         # the codepoint by the space character.
-                        warning.warn(f"No 8-bit codes left in {self.ps_name} "
-                                     f"(page no. {self.page.ordinal})")
-                        next = 32
+                        #warning.warn(f"No 8-bit codes left in {self.ps_name} "
+                        #             f"(page no. {self.page.ordinal})")
+                        #next = 32
+                        return None
                     else:
                         next = self.next
                 else:
@@ -253,9 +260,10 @@ class PageSpecificFontEncoding(object):
     @property
     def ps_name(self):
         """
-        Return the name of the re-encoded font for this page.
+        Return the name of the re-encoded font.
         """
-        return "%s*%i" % ( self.font.ps_name, self.ordinal, )
+        return f"{self.font.ps_name}*"
+
 
 class FontInstance(object):
     """
@@ -331,13 +339,13 @@ class FontInstance(object):
         return width
 
     def encoding(self, container):
-        return container.page.get_encoding_for(self.font)
+        return container.document.get_encoding_for(self.font)
 
     def postscript_representation(self, container, codepoints):
         """
         Return a bytearray representing `codepoints` in this
         particular encoding. This function will register all
-        characters in us with this page.
+        characters in us with this document.
         """
         ret = bytearray()
 
