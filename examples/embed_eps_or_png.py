@@ -36,8 +36,7 @@ from psbuffer.boxes import Canvas, EPSImage, RasterImage
 
 def main():
     parser = utils.make_example_argument_parser(
-        __file__, __doc__, o=True, s=True)
-    args = parser.parse_args()
+        __file__, __doc__, o=True, p=True)
     parser.add_argument("imgpath", type=pathlib.Path)
     args = parser.parse_args()
 
@@ -54,7 +53,6 @@ def main():
                           border=True, comment=args.imgpath.name)
     img.fit(canvas)
 
-    fp = BytesIO()
-    document.write_to(fp)
+    document.write_to(args.outfile.open("wb"))
 
 main()
