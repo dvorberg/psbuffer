@@ -138,7 +138,7 @@ def main():
     # Typeset source. Man, helper functions are needed.
     cmusr10 = cmusr12.font.make_instance(
         args.font_size*0.5, line_height=args.font_size)
-    tb.tail.print(0.25, "setgray")
+    tb.tail.print(0.7, "setgray")
     source_tb = tb.tail.append(TextBox(0, tb.room_left - cmusr10.line_height,
                                        tb.w, cmusr10.line_height))
     source_text = Text.from_text(source, cmusr10, align="left")
