@@ -33,21 +33,79 @@ import re
 from ..measure import Rectangle
 from ..utils import pfb2pfa_Buffer
 from ..base import FileAsBuffer
+from .. import procsets
 
 from .fontbase import Font, GlyphMetric, FontMetrics, FontResourceSection
 from .encoding_tables import encoding_tables, glyph_name_to_codepoint
 from .afm_parser import parse_afm
 
-class global_info(property):
+class Type1(Font):
     """
-    Property class for properties that can be retrieved directly from
-    the parser data.
-    """
-    def __init__(self, keyword):
-        self.keyword = keyword
+    A Type1 font loaded from an outline and a metrics file.
 
-    def __get__(self, metrics, owner="dummy"):
-        return metrics.FontMetrics.get(self.keyword, None)
+    The outline file (in pfa/b format) will be converted to pfa and
+    included in the output file entirely.
+    """
+    def __init__(self, outline_file, metrics_file):
+        """
+        @param outline_file: File pointer of a .pfa/b file.
+        @param metrics_file: File pointer of the corresponding .afm file
+        """
+        self.outline_file = outline_file
+
+        metrics = AFMMetrics(metrics_file)
+
+        super().__init__(metrics.ps_name,
+                         metrics.full_name,
+                         metrics.family_name,
+                         metrics.weight,
+                         metrics.italic,
+                         metrics.fixed_width,
+                         metrics)
+
+    def add_to(self, document):
+        document.add_resource(procsets.font_utils)
+        document.header.supplied_fonts.append(self.ps_name)
+        document.add_resource(Type1ResourceSection(self))
+
+
+class ResidentType1(Font):
+    """
+    A Type1 font available to the Postscript interpreter, for which a
+    metrics file is provided.
+
+    The most common use is probably placing the outline file in
+    Ghostscript’s include path and adding a line to a Fontmap file.
+    Fontmap files map ps_names (as Postscript identifyers) to
+    filenames (as Postscript string literals). Each pair ends with a
+    semicolon like so:
+
+        /CMUSansSerif-Medium (CMUSansSerif-Medium.pfb);
+
+    You may use any font format Ghostscript understands for the font,
+    but the metrics file must be in AFM format. Fontforge knows how to
+    create these and does so when writing Type 1 font files.
+    """
+    def __init__(self, metrics_file, ps_name=None):
+        """
+        `metrics_file`: File pointer of a .afm file
+        The `ps_name` will be used when referring to the font,
+        otherwise it is loaded from the afm file.
+        """
+        metrics = AFMMetrics(metrics_file)
+
+        super().__init__(ps_name or metrics.ps_name,
+                         metrics.full_name,
+                         metrics.family_name,
+                         metrics.weight,
+                         metrics.italic,
+                         metrics.fixed_width,
+                         metrics)
+
+    def add_to(self, document):
+        document.add_resource(procsets.font_utils)
+        document.add_needed_resource("font", self.ps_name)
+
 
 class Type1ResourceSection(FontResourceSection):
     def __init__(self, font):
@@ -72,36 +130,17 @@ class Type1ResourceSection(FontResourceSection):
             else:
                 self.append(FileAsBuffer(fp))
 
-class Type1(Font):
+
+class global_info(property):
     """
-    Model a PostScript Type1 font.
-
-    @ivar charmap: Dictionary with unicode character codes as keys and
-      the coresponding char (glyph) code as values.
+    Property class for properties that can be retrieved directly from
+    the parser data.
     """
-    def __init__(self, outline_file, metrics_file):
-        """
-        @param main_font: Filepointer of a .pfa/b file. This may be
-           None for resident fonts.
-        @param afm_file: File pointer of the corresponding .afm file
-        """
-        self.outline_file = outline_file
-        self.metrics_file = metrics_file
+    def __init__(self, keyword):
+        self.keyword = keyword
 
-        metrics = AFMMetrics(metrics_file)
-
-        super().__init__(metrics.ps_name,
-                         metrics.full_name,
-                         metrics.family_name,
-                         metrics.weight,
-                         metrics.italic,
-                         metrics.fixed_width,
-                         metrics)
-
-    @property
-    def resource_section(self):
-        return Type1ResourceSection(self)
-
+    def __get__(self, metrics, owner="dummy"):
+        return metrics.FontMetrics.get(self.keyword, None)
 
 class AFMMetrics(FontMetrics):
     gs_uni_re = re.compile("uni([A-Fa-f0-9]+).*")
