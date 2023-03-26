@@ -378,7 +378,7 @@ def make_example_argument_parser(
         o=True,       # Output .ps file
         s=False,      # Font size
         default_font_size=12,
-        S=False,      # Paper size
+        p=False,      # Paper size
         font=False):  # PFA und AFM file
     parser = argparse.ArgumentParser(description=description)
 
@@ -392,7 +392,7 @@ def make_example_argument_parser(
 
     if o:
         parser.add_argument(
-            "-o", "--outfile", type=argparse.FileType("bw"), default=psfile,
+            "-o", "--outfile", type=pathlib.Path, default=psfile,
             help=f"Output file, defaults to {psfile.name}.")
 
     if s:
@@ -400,30 +400,39 @@ def make_example_argument_parser(
             "-s", "--font-size", type=float, default=default_font_size,
             help="Font size in pt, defaults to 12.")
 
+    if p:
+        parser.add_argument(
+            "-p", "--paper-size", dest="papersize", type=str, default="a4",
+            help="Paper size known to psbuffer.measure.parse_size()."
+            "Defaults to DIN A4.")
+
     if font:
         parser.add_argument(
             "-O", "--font-outline",
             help="PFA or PFB file. The font must contain polytonic "
             "Greek letters as composed glyphs for this to work. "
-            "The proviced Computer Modern Unicode Sans Serif "
+            "The provided Computer Modern Unicode Sans Serif "
             "works fine; it is also the default.",
-            default=pathlib.Path(op.dirname(main_file_path),
-                                 "CMUSerif-Roman.pfb"),
+            default=None,
             type=pathlib.Path)
 
         parser.add_argument("-M", "--font-metrics",
                             default=pathlib.Path(op.dirname(main_file_path),
-                                                 "CMUSerif-Roman.afm"),
+                                                 "fonts",
+                                                 "CMUSansSerif-Medium.afm"),
                             help="The corresponding AFM file.",
                             type=pathlib.Path)
 
     return parser
 
 def make_font_instance_from_args(args):
-    from psbuffer.fonts import Type1
+    from psbuffer.fonts import Type1, ResidentType1
 
     # Load the font
-    cmusr = Type1(args.font_outline.open(), args.font_metrics.open())
+    if args.font_outline is None:
+        cmusr = ResidentType1(args.font_metrics.open())
+    else:
+        cmusr = Type1(args.font_outline.open(), args.font_metrics.open())
 
     instance = cmusr.make_instance(
         args.font_size, line_height=args.font_size*1.25)
