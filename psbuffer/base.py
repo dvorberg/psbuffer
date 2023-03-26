@@ -162,14 +162,14 @@ class FileAsBuffer(object):
         """
         self.fp = fp
 
-    def write_fo(self, fp):
+    def write_to(self, fp):
         # Make sure the file pointer is at the desired position,
         # that is, the one, we were initialized with.
 
         while True:
             s = self.fp.read(1024)
 
-            if s == "":
+            if not s:
                 break
             else:
                 fp.write(s)
