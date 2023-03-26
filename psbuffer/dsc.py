@@ -31,6 +31,7 @@ Version 3.0 available at
 U{http://partners.adobe.com/public/developer/ps/index_specs.html}.
 """
 import collections.abc, functools
+from collections import namedtuple
 
 from .base import PSBuffer, encode, ps_literal
 from .measure import has_dimensions, parse_size
@@ -376,7 +377,7 @@ class Section(DSCBuffer):
         return self.__class__.__name__[:-len("Section")]
 
 
-class DocumentSuppliedResourceComments(DSCBuffer):
+class DocumentSuppliedResourcesComment(DSCBuffer):
     def __init__(self, document):
         super().__init__()
         self.document = document
@@ -392,6 +393,27 @@ class DocumentSuppliedResourceComments(DSCBuffer):
                 keyword = "+"
 
             tmpbuf.append(Comment(keyword, resource.begin_comment().value))
+
+        tmpbuf.write_to(fp)
+
+NeededResource = namedtuple("NeededResource", [ "type", "identifyer", ])
+
+class DocumentNeededResourcesComment(DSCBuffer):
+    def __init__(self, document):
+        super().__init__()
+        self.document = document
+
+    def write_to(self, fp):
+        tmpbuf = PSBuffer()
+        first = True
+        for type, identifyer in self.document.needed_resources:
+            if first:
+                keyword = "DocumentNeededResources"
+                first = False
+            else:
+                keyword = "+"
+
+            tmpbuf.append(Comment(keyword, [type, identifyer,]))
 
         tmpbuf.write_to(fp)
 
@@ -423,13 +445,8 @@ class HeaderSection(Section):
     title = CommentProperty("Title")
     version = CommentProperty("Version")
 
-    # document_needed_fonts = CommentListProperty("DocumentNeededFonts")
-    # document_needed_procsets = CommentListProperty("DocumentNeededProcSets")
-    # document_supplied_fonts = CommentListProperty("DocumentSuppliedFonts")
-    # document_supplied_procsets = CommentListProperty("DocumentSuppliedProcSets")
-
-    # document_process_colors = CommentListProperty("DocumentProcessColors")
-    # document_custom_colors = CommentListProperty("DocumentCustomColors")
+    #process_colors = CommentListProperty("DocumentProcessColors")
+    #custom_colors = CommentListProperty("DocumentCustomColors")
 
 
 class DefaultsSection(Section):
@@ -568,8 +585,6 @@ class PageBase(Section, has_dimensions):
         # Make sure the page has a bounding_box.
         self.bounding_box = (0, 0, self.w, self.h,)
 
-        self._font_encodings = {}
-
     def begin_comment(self):
         return LazyComment("Page", self.begin_comment_value)
 
@@ -583,14 +598,6 @@ class PageBase(Section, has_dimensions):
 
     def end_comment(self):
         return None
-
-    def get_encoding_for(self, font):
-        if not font.ps_name in self._font_encodings:
-            self.document.add_font(font)
-            self._font_encodings[font.ps_name] = font.make_encoding_for_page(
-                self)
-
-        return self._font_encodings[font.ps_name]
 
 class Page(PageBase):
     """
@@ -662,7 +669,10 @@ class Document(Section):
         self.property_comments.add(BoundingBoxComment(self))
         self.property_comments.add(HiResBoundingBoxComment(self))
 
-        self.header.append(DocumentSuppliedResourceComments(self))
+        self.header.append(DocumentNeededResourcesComment(self))
+        self.header.append(DocumentSuppliedResourcesComment(self))
+        #self.header.process_colors = []
+        #self.header.custom_colors = []
 
         self.defaults = self.append(DefaultsSection())
         self.prolog = self.append(PrologSection())
@@ -670,7 +680,15 @@ class Document(Section):
         self.pages = self.append(PagesSection())
         self.trailer = self.append(Trailer())
 
-        self._fonts = set()
+        self.needed_resources = set()
+        self._font_encodings = {}
+
+    def get_encoding_for(self, font):
+        if not font.ps_name in self._font_encodings:
+            font.add_to(self)
+            self._font_encodings[font.ps_name] = font.make_encoding(self)
+
+        return self._font_encodings[font.ps_name]
 
     def begin_comment(self):
         return b"%!PS-Adobe-3.0\n"
@@ -685,13 +703,6 @@ class Document(Section):
     def add_resource(self, resource):
         if resource not in self.prolog.resources():
             self.prolog.append(resource)
-
-    def add_font(self, font):
-        from . import procsets
-        self.add_resource(procsets.font_utils)
-        if not font.ps_name in self._fonts:
-            self._fonts.add(font.ps_name)
-            self.add_resource(font.resource_section)
 
     def append(self, thing):
         if isinstance(thing, PageBase):
@@ -716,6 +727,9 @@ class Document(Section):
         else:
             return None
 
+    def add_needed_resource(self, type, identifyer):
+        assert type in ("file", "font", "procset",), ValueError
+        self.needed_resources.add(NeededResource(type, identifyer))
 
 class EPSDocument(Document):
     """
