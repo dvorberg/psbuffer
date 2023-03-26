@@ -23,4 +23,4 @@
 ##  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 ##
 ##  I have added a copy of the GPL in the file gpl.txt.
-from .type1 import Type1
+from .type1 import Type1, ResidentType1
