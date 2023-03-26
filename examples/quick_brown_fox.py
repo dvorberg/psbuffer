@@ -80,6 +80,6 @@ def main():
     newline()
     font.xshow(canvas, [ord(c) for c in args.text])
 
-    document.write_to(args.outfile)
+    document.write_to(args.outfile.open("wb"))
 
 main()
