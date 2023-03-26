@@ -177,7 +177,7 @@ def booklet_main():
                          outpdf_path, )
 
         for n in range(args.number_of_copies):
-            completed = run(cmd, capture_output=True)
+            completed = run(cmd, capture_output=True, shell=True)
 
             if completed.returncode != 0:
                 raise IOError(completed.stderr)
@@ -250,7 +250,7 @@ def leaflet_main():
                "-o CNColorMode=mono "
                "-o ColorModel=Gray "
                "%s") % ( args.printer_tray, number_of_copies, outpdf_path, )
-        completed = run(cmd, capture_output=True)
+        completed = run(cmd, capture_output=True, shell=True)
 
         if completed.returncode != 0:
             raise IOError(completed.stderr)
