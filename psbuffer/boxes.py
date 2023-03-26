@@ -266,10 +266,10 @@ class EPSBox(IsolatedBox):
             factor = h / self.h
             w = self.w * factor
 
-        canvas.print("gsave % fit() of", self._comment)
-        canvas.print(factor, factor, "scale", "% fit() of ", self._comment)
+        canvas.print("gsave % fit() of", self.comment)
+        canvas.print(factor, factor, "scale", "% fit() of ", self.comment)
         canvas.append(self)
-        canvas.print("grestore % fit() of", self._comment)
+        canvas.print("grestore % fit() of", self.comment)
 
         return (w, h)
 
