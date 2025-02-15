@@ -132,7 +132,7 @@ class Box(BoxBuffer, Rectangle):
 
         if self.clip:
             self._print_bounding_path(print)
-            head.print("clip % clip=True")
+            self.head.print("clip % clip=True")
 
         print("% end prolog of", comment)
 
@@ -253,7 +253,7 @@ class EPSBox(IsolatedBox):
 
     def fit(self, canvas):
         """
-        Fit this image into `canvas` so that it will set at (0,0) filling
+        Fit this image into `canvas` so that it will sit at (0,0) filling
         as much of the canvas as possible.  Return the size of the
         scaled image as a pair of floats (in PostScript units).
         """
@@ -272,6 +272,32 @@ class EPSBox(IsolatedBox):
         canvas.print("grestore % fit() of", self.comment)
 
         return (w, h)
+
+    def fill(self, canvas):
+        """
+        Fill `canvas` with this image, even if that means cropping the image.
+        Returns the coordinates of the lower left corner of the scaled image
+        and its size as a 4-tuple (x, y, w, h,)
+        """
+        w = canvas.w
+        factor = w / self.w
+        h = self.h * factor
+
+        if h < canvas.h:
+            h = canvas.h
+            factor = h / self.h
+            w = self.w * factor
+
+        x = (canvas.w - w) / 2
+        y = (canvas.h - h) / 2
+
+        canvas.print("gsave % fill() of", self.comment)
+        canvas.print(x, y, "translate", "% fill() of ", self.comment)
+        canvas.print(factor, factor, "scale")
+        canvas.append(self)
+        canvas.print("grestore % fill() of", self.comment)
+
+        return (x, y, w, h)
 
 class EPSImage(EPSBox):
     """
