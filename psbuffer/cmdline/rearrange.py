@@ -2,7 +2,7 @@ import sys, os, os.path as op, string, re, datetime, argparse
 import tempfile, shutil
 from subprocess import run
 
-from psbuffer.measure import parse_size
+from psbuffer.measure import mm, parse_size
 from psbuffer.dsc import Document, Page
 from psbuffer.boxes import Canvas, EPSImage
 
@@ -92,6 +92,17 @@ def booklet_main():
     ap.add_argument("-t", dest="printer_tray",
                     help="Einzugsfach des Druckers („Tray?“)",
                     default="Auto")
+    ap.add_argument("-f", dest="fit",
+                    help="Scale the input page to fit onto the target page.",
+                    default=False, action="store_true")
+    ap.add_argument("-m", dest="margin",
+                    help="When scaling the image (-f or -F), apply this "
+                    "margin to the output page. Defaults to 0, in mm.",
+                    default=0, type=float)
+    ap.add_argument("-F", dest="fill",
+                    help="Scale the input page to fill the target page, "
+                    "even if it means cropping the input.", default=False,
+                    action="store_true")
     ap.add_argument("-C", dest="color", action="store_true", default=False,
                     help="Use color printing mode on the printer, "
                     "otherwise output is monochrome.")
@@ -102,9 +113,16 @@ def booklet_main():
 
     args = ap.parse_args()
 
+    if args.fill and args.fit:
+        ap.error("Fit and fill are mutually exclusive.")
+
     def eps_to_document(filepaths):
         w, h = parse_size("a4 landscape")
         document = Document()
+
+        if len(filepaths) < 3:
+            ap.error("“Booklet” does not make sense with less than "
+                     "three pages.")
 
         # Create dummy entries at the end of filepaths
         # to fill up pages until their number is a multiple
@@ -118,29 +136,52 @@ def booklet_main():
             filepath = filepaths[no]
             if filepath is None:
                 # Return a dummy object for an empty page.
-                return Canvas(0, 0, w, h)
+                return None
             else:
                 return EPSImage(open(filepath, "rb"))
+
+        def append_maybe_scaling(outpage, no):
+            inpage = load_input_page(no)
+
+            if inpage is not None:
+                if args.fit:
+                    inpage.fit(outpage)
+                elif args.fill:
+                    inpage.fill(outpage)
+                else:
+                    outpage.append(inpage)
+
+        def apply_margin(canvas):
+            if args.margin == 0:
+                return canvas
+            else:
+                margin = mm(args.margin)
+                return canvas.append(Canvas(margin, margin,
+                                            canvas.w - 2*margin,
+                                            canvas.h - 2*margin))
 
         inpagecount = len(filepaths)
 
         # Create the output pages.
         for counter in range(inpagecount // 2):
             outpage = document.append(Page( (w, h,) ))
-            left = outpage # left side of the page
-            # right side of the page
+            left = outpage.append(Canvas(
+                0, 0, outpage.w/2, outpage.h, clip=True))
             right = outpage.append(Canvas(
-                outpage.w / 2, 0, outpage.w/2, outpage.h))
+                outpage.w / 2, 0, outpage.w/2, outpage.h, clip=True))
+
+            left = apply_margin(left)
+            right = apply_margin(right)
 
             q = counter // 2
 
             if counter % 2 == 0:
                 # Odd numbered output pages.
-                left.append(load_input_page((inpagecount-1)-(q*2)))
-                right.append(load_input_page(q*2))
+                append_maybe_scaling(left, (inpagecount-1)-(q*2))
+                append_maybe_scaling(right, q*2)
             else:
-                left.append(load_input_page(q*2+1))
-                right.append(load_input_page((inpagecount)-(q*2+2)))
+                append_maybe_scaling(left, q*2+1)
+                append_maybe_scaling(right, (inpagecount)-(q*2+2))
 
         return document
 
@@ -204,6 +245,9 @@ def leaflet_main():
     ap.add_argument("-d", dest="debug", action="store_true", default=False,
                     help="If debugging is enabled, intermediate "
                     "files will be kept.")
+    ap.add_argument("-C", dest="color", action="store_true", default=False,
+                    help="Use color printing mode on the printer, "
+                    "otherwise output is monochrome.")
     ap.add_argument("infile_path", metavar="infile", help="Input pdf file")
 
     args = ap.parse_args()
@@ -241,15 +285,24 @@ def leaflet_main():
         if number_of_copies < 1:
             number_of_copies = 1
 
-        cmd = ("PRINTER=Canon lp -o InputSlot=%s "
-               "-n %i -o collate=true "
-               "-o media=a4 -o orientation-requested=4 "
-               "-o sides=two-sided-short-edge "
-               "-o BindEdge=Top "
-               "-o Resolution=1200x1200dpi "
-               "-o CNColorMode=mono "
-               "-o ColorModel=Gray "
-               "%s") % ( args.printer_tray, number_of_copies, outpdf_path, )
+        if args.color:
+            CNColorMode="color"
+            ColorModel="RGB"
+            Resolution="600x600dpi"
+        else:
+            CNColorMode="mono"
+            ColorModel="Gray"
+            Resolution="1200x1200dpi"
+
+        cmd = (f"PRINTER=Canon lp -o InputSlot={args.printer_tray} "
+               f"-n {number_of_copies} -o collate=true "
+               f"-o media=a4 -o orientation-requested=4 "
+               f"-o sides=two-sided-short-edge "
+               f"-o BindEdge=Top "
+               f"-o Resolution={Resolution} "
+               f"-o CNColorMode={CNColorMode} "
+               f"-o ColorModel={ColorModel} "
+               f"{outpdf_path}")
         completed = run(cmd, capture_output=True, shell=True)
 
         if completed.returncode != 0:
